@@ -9,7 +9,7 @@ import dotenv from "dotenv";
 
 // Middleware
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
-import { requestLogger } from "./middleware/requestLogger.js";
+// import { requestLogger } from "./middleware/requestLogger.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
@@ -70,7 +70,7 @@ app.use(limiter);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(mongoSanitize());
-app.use(requestLogger);
+// app.use(requestLogger);
 
 // API Docs (enable conditionally if needed)
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
