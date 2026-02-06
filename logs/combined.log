@@ -206,3 +206,6 @@
 {"level":"info","message":"MongoDB connected: fc-b2dfaad05c7c-000.mongocluster.cosmos.azure.com","service":"web-agency-api","timestamp":"2026-02-06T18:48:06.498Z"}
 {"level":"info","message":"Server running on port 3000","service":"web-agency-api","timestamp":"2026-02-06T18:48:06.503Z"}
 {"level":"info","message":"API Docs: http://localhost:3000/api-docs","service":"web-agency-api","timestamp":"2026-02-06T18:48:06.503Z"}
+{"level":"info","message":"MongoDB connected: fc-b2dfaad05c7c-000.mongocluster.cosmos.azure.com","service":"web-agency-api","timestamp":"2026-02-06T18:48:19.721Z"}
+{"level":"info","message":"Server running on port 3000","service":"web-agency-api","timestamp":"2026-02-06T18:48:19.727Z"}
+{"level":"info","message":"API Docs: http://localhost:3000/api-docs","service":"web-agency-api","timestamp":"2026-02-06T18:48:19.727Z"}
