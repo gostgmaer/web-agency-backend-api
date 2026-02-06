@@ -1,0 +1,630 @@
+{
+  "info": {
+    "name": "Web Development Agency API",
+    "description": "Complete API collection for Web Development Agency backend service",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{authToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Admin Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('authToken', response.data.token);",
+                  "    pm.test('Login successful', function () {",
+                  "        pm.expect(response.success).to.be.true;",
+                  "        pm.expect(response.data.token).to.exist;",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@webagency.com\",\n  \"password\": \"admin123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Login with admin credentials to get JWT token"
+          }
+        },
+        {
+          "name": "Get Admin Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "profile"]
+            },
+            "description": "Get current admin profile information"
+          }
+        },
+        {
+          "name": "Admin Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "logout"]
+            },
+            "description": "Logout admin user"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Newsletter",
+      "item": [
+        {
+          "name": "Subscribe to Newsletter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/newsletter/subscribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "newsletter", "subscribe"]
+            },
+            "description": "Subscribe email to newsletter (sends welcome email)"
+          }
+        },
+        {
+          "name": "Unsubscribe from Newsletter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/newsletter/unsubscribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "newsletter", "unsubscribe"]
+            },
+            "description": "Unsubscribe email from newsletter"
+          }
+        },
+        {
+          "name": "Get Newsletter Subscribers (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/newsletter?page=1&limit=10&status=active",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "newsletter"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "status",
+                  "value": "active"
+                }
+              ]
+            },
+            "description": "Get paginated list of newsletter subscribers (Admin only)"
+          }
+        },
+        {
+          "name": "Delete Newsletter Subscriber (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/newsletter/{{subscriberId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "newsletter", "{{subscriberId}}"]
+            },
+            "description": "Delete newsletter subscriber by ID (Admin only)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Blog",
+      "item": [
+        {
+          "name": "Get Published Blogs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/blogs?page=1&limit=10&category=tech&search=web",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "blogs"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "category",
+                  "value": "tech"
+                },
+                {
+                  "key": "search",
+                  "value": "web"
+                }
+              ]
+            },
+            "description": "Get paginated list of published blogs with optional filtering"
+          }
+        },
+        {
+          "name": "Get Blog by Slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/blogs/{{blogSlug}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "blogs", "{{blogSlug}}"]
+            },
+            "description": "Get single blog post by slug (increments view count)"
+          }
+        },
+        {
+          "name": "Create Blog (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Getting Started with Modern Web Development\",\n  \"slug\": \"getting-started-modern-web-development\",\n  \"content\": \"<p>This is the full content of the blog post...</p>\",\n  \"excerpt\": \"Learn the fundamentals of modern web development with this comprehensive guide.\",\n  \"featuredImage\": \"https://example.com/image.jpg\",\n  \"categories\": [\"web-development\", \"tutorial\"],\n  \"tags\": [\"javascript\", \"react\", \"nodejs\"],\n  \"isPublished\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/blogs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "blogs"]
+            },
+            "description": "Create new blog post (Admin only)"
+          }
+        },
+        {
+          "name": "Update Blog (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Blog Title\",\n  \"content\": \"<p>Updated content...</p>\",\n  \"isPublished\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/blogs/{{blogId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "blogs", "{{blogId}}"]
+            },
+            "description": "Update existing blog post (Admin only)"
+          }
+        },
+        {
+          "name": "Delete Blog (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/blogs/{{blogId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "blogs", "{{blogId}}"]
+            },
+            "description": "Soft delete blog post (Admin only)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Contact",
+      "item": [
+        {
+          "name": "Submit Contact Form",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"phone\": \"+1234567890\",\n  \"company\": \"Acme Corp\",\n  \"subject\": \"Website Development Inquiry\",\n  \"message\": \"I'm interested in developing a new website for my business. Could you please provide more information about your services?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/contact",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "contact"]
+            },
+            "description": "Submit contact form (sends notification and confirmation emails)"
+          }
+        },
+        {
+          "name": "Get All Contacts (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/contact?page=1&limit=10&status=new&priority=high",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "contact"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "status",
+                  "value": "new"
+                },
+                {
+                  "key": "priority",
+                  "value": "high"
+                }
+              ]
+            },
+            "description": "Get paginated list of contact submissions (Admin only)"
+          }
+        },
+        {
+          "name": "Get Contact by ID (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/contact/{{contactId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "contact", "{{contactId}}"]
+            },
+            "description": "Get single contact submission by ID (Admin only, marks as read)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Inquiry",
+      "item": [
+        {
+          "name": "Submit Project Inquiry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Smith\",\n  \"email\": \"jane@example.com\",\n  \"phone\": \"+1234567890\",\n  \"company\": \"Tech Startup Inc\",\n  \"projectType\": \"webapp\",\n  \"budget\": \"25k-50k\",\n  \"timeline\": \"3-6months\",\n  \"description\": \"We need a comprehensive web application for our SaaS platform with user authentication, dashboard, and payment integration.\",\n  \"requirements\": [\"User Authentication\", \"Payment Gateway\", \"Admin Dashboard\", \"API Integration\"]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/inquiry",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "inquiry"]
+            },
+            "description": "Submit project inquiry (sends notification and confirmation emails)"
+          }
+        },
+        {
+          "name": "Get All Inquiries (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/inquiry?page=1&limit=10&status=new&projectType=webapp&priority=high",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "inquiry"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "status",
+                  "value": "new"
+                },
+                {
+                  "key": "projectType",
+                  "value": "webapp"
+                },
+                {
+                  "key": "priority",
+                  "value": "high"
+                }
+              ]
+            },
+            "description": "Get paginated list of project inquiries (Admin only)"
+          }
+        },
+        {
+          "name": "Get Inquiry by ID (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/inquiry/{{inquiryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "inquiry", "{{inquiryId}}"]
+            },
+            "description": "Get single inquiry by ID (Admin only, marks as reviewing)"
+          }
+        },
+        {
+          "name": "Delete Inquiry (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/inquiry/{{inquiryId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "inquiry", "{{inquiryId}}"]
+            },
+            "description": "Delete inquiry by ID (Admin only)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Plans",
+      "item": [
+        {
+          "name": "Get All Plans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/plans?category=website&billingCycle=monthly",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "plans"],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "website"
+                },
+                {
+                  "key": "billingCycle",
+                  "value": "monthly"
+                }
+              ]
+            },
+            "description": "Get all active plans with optional filtering"
+          }
+        },
+        {
+          "name": "Create Plan (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Professional Website\",\n  \"slug\": \"professional-website\",\n  \"description\": \"Complete professional website with custom design and CMS\",\n  \"price\": 2999,\n  \"currency\": \"USD\",\n  \"billingCycle\": \"one-time\",\n  \"category\": \"website\",\n  \"features\": [\n    {\n      \"name\": \"Custom Design\",\n      \"included\": true,\n      \"description\": \"Fully custom website design\"\n    },\n    {\n      \"name\": \"Content Management\",\n      \"included\": true,\n      \"description\": \"Easy-to-use CMS\"\n    },\n    {\n      \"name\": \"SEO Optimization\",\n      \"included\": true,\n      \"description\": \"Search engine optimization\"\n    }\n  ],\n  \"isPopular\": true,\n  \"isActive\": true,\n  \"order\": 1\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/plans",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "plans"]
+            },
+            "description": "Create new plan (Admin only)"
+          }
+        },
+        {
+          "name": "Update Plan (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 3499,\n  \"isPopular\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/plans/{{planId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "plans", "{{planId}}"]
+            },
+            "description": "Update existing plan (Admin only)"
+          }
+        },
+        {
+          "name": "Delete Plan (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/plans/{{planId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "plans", "{{planId}}"]
+            },
+            "description": "Delete plan by ID (Admin only)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Check API health status"
+          }
+        }
+      ]
+    }
+  ]
+}
