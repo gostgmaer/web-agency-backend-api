@@ -4,6 +4,15 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const ENABLE_LOGGING = process.env.ENABLE_LOGGING !== 'false'; // Default to true unless explicitly disabled
 const LOG_LEVEL = process.env.LOG_LEVEL || (NODE_ENV === 'production' ? 'info' : 'debug');
 
+// Detect serverless/read-only filesystem environments
+const IS_SERVERLESS = !!(
+  process.env.VERCEL ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.NETLIFY ||
+  process.env.SERVERLESS ||
+  process.env.DISABLE_FILE_LOGGING === 'true'
+);
+
 /**
  * Custom log format for console output
  */
@@ -41,23 +50,28 @@ const createLogger = () => {
     );
   }
 
-  // File transports - only in production or when logging is enabled
-  if (ENABLE_LOGGING && NODE_ENV === 'production') {
-    transports.push(
-      new winston.transports.File({
-        filename: 'logs/error.log',
-        level: 'error',
-        format: fileFormat,
-        maxsize: 5242880, // 5MB
-        maxFiles: 5
-      }),
-      new winston.transports.File({
-        filename: 'logs/combined.log',
-        format: fileFormat,
-        maxsize: 5242880, // 5MB
-        maxFiles: 5
-      })
-    );
+  // File transports - only in production when NOT in serverless environment
+  if (ENABLE_LOGGING && NODE_ENV === 'production' && !IS_SERVERLESS) {
+    try {
+      transports.push(
+        new winston.transports.File({
+          filename: 'logs/error.log',
+          level: 'error',
+          format: fileFormat,
+          maxsize: 5242880, // 5MB
+          maxFiles: 5
+        }),
+        new winston.transports.File({
+          filename: 'logs/combined.log',
+          format: fileFormat,
+          maxsize: 5242880, // 5MB
+          maxFiles: 5
+        })
+      );
+    } catch (err) {
+      // Silently skip file logging if directory creation fails
+      console.warn('File logging disabled - could not create logs directory');
+    }
   }
 
   // If no transports, add a silent transport to prevent errors
