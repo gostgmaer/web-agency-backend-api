@@ -130,3 +130,6 @@ export const sendInquiryConfirmation = async (inquiry) => {
     throw error;
   }
 };
+
+// Alias for newsletter routes
+export const sendNewsletterWelcome = sendWelcomeEmail;

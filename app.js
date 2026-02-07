@@ -6,6 +6,9 @@ import mongoSanitize from "express-mongo-sanitize";
 import swaggerJsdoc from "swagger-jsdoc";
 import swaggerUi from "swagger-ui-express";
 import dotenv from "dotenv";
+import compression from "compression";
+import { randomUUID } from "crypto";
+import mongoose from "mongoose";
 
 // Middleware
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
@@ -19,18 +22,90 @@ import contactRoutes from "./routes/contact.js";
 import inquiryRoutes from "./routes/inquiry.js";
 import planRoutes from "./routes/plans.js";
 
+import logger from "./utils/logger.js";
+
 dotenv.config();
 
 const app = express();
+const isDevelopment = process.env.NODE_ENV !== 'production';
 
-// Rate limiting
+/**
+ * Request ID middleware - adds unique ID for request tracking
+ */
+app.use((req, res, next) => {
+  req.requestId = req.headers['x-request-id'] || randomUUID();
+  res.setHeader('X-Request-ID', req.requestId);
+  next();
+});
+
+/**
+ * Request timing middleware
+ */
+app.use((req, res, next) => {
+  req.startTime = Date.now();
+
+  res.on('finish', () => {
+    const duration = Date.now() - req.startTime;
+    // Log requests that are slow (> 1s) or errors
+    if (duration > 1000 || res.statusCode >= 400) {
+      logger.logRequest(req, res, duration);
+    }
+  });
+
+  next();
+});
+
+/**
+ * Compression middleware - gzip responses
+ */
+app.use(compression({
+  level: 6, // Balance between compression ratio and speed
+  threshold: 1024, // Only compress responses > 1KB
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
+
+/**
+ * Rate limiting - optimized for 100 RPS
+ * Window: 1 minute, Max: 200 requests per IP (allows burst)
+ */
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: 60 * 1000, // 1 minute window
+  max: 200, // 200 requests per minute per IP (allows for burst)
+  standardHeaders: true,
+  legacyHeaders: false,
   message: {
     success: false,
-    message: "Too many requests from this IP, please try again later",
-    errors: []
+    error: {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Too many requests from this IP. Please wait a moment and try again.'
+    }
+  },
+  skip: (req) => {
+    // Skip rate limiting for health checks
+    return req.path === '/api/health';
+  },
+  keyGenerator: (req) => {
+    return req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+  }
+});
+
+/**
+ * Stricter rate limit for auth endpoints
+ */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 attempts per 15 minutes
+  message: {
+    success: false,
+    error: {
+      code: 'AUTH_RATE_LIMIT',
+      message: 'Too many login attempts. Please try again in 15 minutes.'
+    }
   }
 });
 
@@ -58,22 +133,46 @@ const swaggerOptions = {
 
 const specs = swaggerJsdoc(swaggerOptions);
 
-// Global middleware
-app.use(helmet());
+// Security middleware
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: isDevelopment ? false : undefined
+}));
+
+// CORS configuration
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || "http://localhost:3001",
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID']
   })
 );
+
+// Apply global rate limiter
 app.use(limiter);
-app.use(express.json({ limit: "10mb" }));
+
+// Body parsers with size limits
+app.use(express.json({
+  limit: "10mb",
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Security: Sanitize against NoSQL injection
 app.use(mongoSanitize());
+
 // app.use(requestLogger);
 
-// API Docs (enable conditionally if needed)
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
+// API Docs (only in development/staging)
+if (isDevelopment || process.env.ENABLE_SWAGGER === 'true') {
+  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
+}
+
+// Apply stricter rate limit to auth routes
+app.use("/api/auth/login", authLimiter);
 
 // Routes
 app.use("/api/auth", authRoutes);
@@ -83,16 +182,54 @@ app.use("/api/contact", contactRoutes);
 app.use("/api/inquiry", inquiryRoutes);
 app.use("/api/plans", planRoutes);
 
-// Health check
+/**
+ * Enhanced health check with system metrics
+ */
 app.get("/api/health", (req, res) => {
+  const healthData = {
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    environment: process.env.NODE_ENV || 'development',
+    version: process.env.npm_package_version || '1.0.0'
+  };
+
+  // Add detailed metrics in development or if requested
+  if (isDevelopment || req.query.detailed === 'true') {
+    const memUsage = process.memoryUsage();
+    healthData.memory = {
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB',
+      rss: Math.round(memUsage.rss / 1024 / 1024) + 'MB'
+    };
+    healthData.pid = process.pid;
+  }
+
   res.status(200).json({
     success: true,
     message: "Server is running successfully",
-    data: {
-      status: "healthy",
-      timestamp: new Date().toISOString()
-    }
+    data: healthData
   });
+});
+
+/**
+ * Readiness check for load balancers
+ */
+app.get("/api/ready", (req, res) => {
+  // Check if database is connected (readyState: 1 = connected)
+  const isDbReady = mongoose.connection.readyState === 1;
+
+  if (isDbReady) {
+    res.status(200).json({
+      success: true,
+      message: "Service is ready"
+    });
+  } else {
+    res.status(503).json({
+      success: false,
+      message: "Service is not ready - database not connected"
+    });
+  }
 });
 
 // Error handling

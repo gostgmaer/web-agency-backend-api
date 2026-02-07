@@ -5,11 +5,15 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
+    "start:cluster": "node cluster.js",
     "dev": "node --watch server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:load": "npx autocannon -c 100 -d 30 http://localhost:3000/api/health",
+    "test:load:blogs": "npx autocannon -c 100 -d 30 http://localhost:3000/api/blogs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",

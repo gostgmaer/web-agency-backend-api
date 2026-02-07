@@ -1,0 +1,79 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    # Warm-up phase
+    - duration: 30
+      arrivalRate: 10
+      name: "Warm-up (10 RPS)"
+    # Ramp-up phase  
+    - duration: 60
+      arrivalRate: 10
+      rampTo: 100
+      name: "Ramp-up (10→100 RPS)"
+    # Sustained load phase
+    - duration: 120
+      arrivalRate: 100
+      name: "Sustained (100 RPS)"
+  
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  
+  # Performance thresholds
+  ensure:
+    p95: 200    # 95th percentile < 200ms
+    p99: 500    # 99th percentile < 500ms
+    maxErrorRate: 1  # Error rate < 1%
+
+scenarios:
+  # Health check endpoint (lightest load)
+  - name: "Health Check"
+    weight: 20
+    flow:
+      - get:
+          url: "/api/health"
+
+  # Get published blogs (public, read-heavy)
+  - name: "Get Blogs List"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/blogs"
+          qs:
+            page: 1
+            limit: 10
+
+  # Get single blog by slug
+  - name: "Get Blog by Slug"
+    weight: 15
+    flow:
+      - get:
+          url: "/api/blogs/sample-blog-post"
+
+  # Get plans (public)
+  - name: "Get Plans"
+    weight: 20
+    flow:
+      - get:
+          url: "/api/plans"
+
+  # Newsletter subscribe (write operation)
+  - name: "Newsletter Subscribe"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/newsletter/subscribe"
+          json:
+            email: "test-{{ $randomNumber(1000, 9999) }}@loadtest.com"
+
+  # Contact form submission
+  - name: "Submit Contact Form"
+    weight: 5
+    flow:
+      - post:
+          url: "/api/contact"
+          json:
+            name: "Load Test User"
+            email: "loadtest-{{ $randomNumber(1000, 9999) }}@test.com"
+            subject: "Load Test Inquiry"
+            message: "This is an automated load test message to verify system performance."

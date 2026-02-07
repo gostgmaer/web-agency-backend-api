@@ -1,0 +1,34 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    # Quick test - 30 seconds at 50 RPS
+    - duration: 30
+      arrivalRate: 50
+      name: "Quick Load Test (50 RPS)"
+  
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  
+  ensure:
+    p95: 200
+    maxErrorRate: 2
+
+scenarios:
+  - name: "Health Check"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/health"
+
+  - name: "Get Blogs"
+    weight: 40
+    flow:
+      - get:
+          url: "/api/blogs"
+
+  - name: "Get Plans"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/plans"
