@@ -2,7 +2,7 @@ import logger from './logger.js';
 import dotenv from "dotenv";
 
 const EMAIL_SERVICE_URL =
-  `${process.env.EMAIL_SERVICE_URL || 'http://localhost:3100'}/send-email`;
+  `${process.env.EMAIL_SERVICE_URL || 'http://localhost:3000'}/send-email`;
 
 
 
@@ -67,7 +67,8 @@ export const sendInquiryNotification = async (inquiry) => {
         description: inquiry.description,
         requirements: inquiry.requirements || [],
         submittedAt: new Date(inquiry.createdAt).toLocaleString(),
-        inquiryId: inquiry._id.toString()
+        inquiryId: inquiry._id.toString(),
+        inquiryNumber: inquiry.inquiryNumber
       }
     });
   } catch (error) {
@@ -122,7 +123,8 @@ export const sendInquiryConfirmation = async (inquiry) => {
         budget: inquiry.budget,
         timeline: inquiry.timeline,
         companyName: 'Web Agency',
-        inquiryId: inquiry._id.toString()
+        inquiryId: inquiry._id.toString(),
+        inquiryNumber: inquiry.inquiryNumber
       }
     });
   } catch (error) {

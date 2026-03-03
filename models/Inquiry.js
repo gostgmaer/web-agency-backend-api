@@ -1,5 +1,14 @@
 import mongoose from 'mongoose';
 
+// A simple counter collection used for auto-incrementing sequences
+const counterSchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+  seq: { type: Number, default: 0 }
+});
+
+// we create the model here so it can be reused by other modules if needed
+const Counter = mongoose.model('Counter', counterSchema);
+
 const inquirySchema = new mongoose.Schema({
   // Contact Information
   name: {
@@ -71,6 +80,13 @@ const inquirySchema = new mongoose.Schema({
     size: Number,
     uploadedAt: { type: Date, default: Date.now }
   }],
+
+  // Sequential identifier for tracking inquiries
+  inquiryNumber: {
+    type: Number,
+    unique: true,
+    index: true
+  },
 
   // Status & Assignment
   status: {
@@ -204,10 +220,22 @@ inquirySchema.index({
   name: 'InquiryTextIndex'
 });
 
-// Auto-set priority based on budget
-inquirySchema.pre('save', function (next) {
+// Auto-set priority based on budget and assign a sequential inquiry number
+inquirySchema.pre('save', async function (next) {
   if (this.isNew) {
-    // Set priority based on budget
+    // --- sequential number logic ------------------------------------------------
+    try {
+      const counter = await Counter.findOneAndUpdate(
+        { name: 'inquiry' },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
+      this.inquiryNumber = counter.seq;
+    } catch (err) {
+      return next(err);
+    }
+
+    // --- priority logic ---------------------------------------------------------
     const highBudgets = ['50k-100k', 'over-100k'];
     const mediumBudgets = ['25k-50k', '10k-25k'];
 
