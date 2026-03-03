@@ -1,7 +1,9 @@
+
 import winston from 'winston';
+import pkg from 'dotenv';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const ENABLE_LOGGING = process.env.ENABLE_LOGGING !== 'false'; // Default to true unless explicitly disabled
+const ENABLE_LOGGING = false; // Default to true unless explicitly disabled
 const LOG_LEVEL = process.env.LOG_LEVEL || (NODE_ENV === 'production' ? 'info' : 'debug');
 
 // Detect serverless/read-only filesystem environments

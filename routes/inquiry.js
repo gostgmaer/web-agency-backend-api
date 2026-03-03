@@ -55,23 +55,23 @@ router.post("/", createInquiryValidation, validateRequest, sanitizeInput, async 
 			logger.error("Failed to send inquiry emails:", { error: emailError.message, inquiryId: inquiry._id });
 		});
 
-		generateProposal({
-			templateType: "smallStaticproposal",
-			count: inquiry.inquiryNumber,
-			variables: {
-				client: inquiry.name,
-				company: inquiry.company,
-				development_cost: "₹45,000",
-				gst_amount: "₹8,100",
-				total_amount: "₹53,100",
-			},
-		})
-			.then((res) => {
-				console.log("Proposal Generated:", res);
-			})
-			.catch((err) => {
-				console.error(err);
-			});
+		// generateProposal({
+		// 	templateType: "smallStaticproposal",
+		// 	count: inquiry.inquiryNumber,
+		// 	variables: {
+		// 		client: inquiry.name,
+		// 		company: inquiry.company,
+		// 		development_cost: "₹45,000",
+		// 		gst_amount: "₹8,100",
+		// 		total_amount: "₹53,100",
+		// 	},
+		// })
+		// 	.then((res) => {
+		// 		console.log("Proposal Generated:", res);
+		// 	})
+		// 	.catch((err) => {
+		// 		console.error(err);
+		// 	});
 
 		logger.info("Inquiry submitted", {
 			inquiryId: inquiry._id,
