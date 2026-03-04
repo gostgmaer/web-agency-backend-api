@@ -120,7 +120,7 @@ const newsletterSchema = new mongoose.Schema({
 
 // Indexes
 newsletterSchema.index({ isActive: 1 });
-newsletterSchema.index({ email: 1 });
+// email already unique on the schema
 newsletterSchema.index({ isConfirmed: 1 });
 newsletterSchema.index({ createdAt: -1 });
 newsletterSchema.index({ tags: 1 });

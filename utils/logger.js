@@ -3,7 +3,15 @@ import winston from 'winston';
 import pkg from 'dotenv';
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const ENABLE_LOGGING = false; // Default to true unless explicitly disabled
+
+// Enable logging if the environment variable is omitted or set to
+// 'true'.  Setting it explicitly to 'false' will disable all transports
+// except the silent fallback.  In development we usually want logs on
+// regardless of the flag, so this mirrors the original behaviour.
+const ENABLE_LOGGING =
+  process.env.ENABLE_LOGGING === undefined ? true :
+  process.env.ENABLE_LOGGING.toLowerCase() === 'true';
+
 const LOG_LEVEL = process.env.LOG_LEVEL || (NODE_ENV === 'production' ? 'info' : 'debug');
 
 // Detect serverless/read-only filesystem environments
@@ -42,14 +50,20 @@ const fileFormat = winston.format.combine(
 const createLogger = () => {
   const transports = [];
 
-  // Console transport - always enabled in development, controlled by env in production
-  if (NODE_ENV !== 'production' || ENABLE_LOGGING) {
+  // Console transport - only added if logging is enabled (regardless of env).
+  // previously we always logged to console in development; remove that exception
+  // so the ENABLE_LOGGING flag truly disables all output when set to false.
+  if (ENABLE_LOGGING) {
     transports.push(
       new winston.transports.Console({
         format: consoleFormat,
         level: LOG_LEVEL
       })
     );
+  } else {
+    // add silent transport early to avoid warnings, but we'll also add one
+    // later if transports array ends up empty.
+    transports.push(new winston.transports.Console({ silent: true }));
   }
 
   // File transports - only in production when NOT in serverless environment
@@ -76,7 +90,7 @@ const createLogger = () => {
     }
   }
 
-  // If no transports, add a silent transport to prevent errors
+  // If no transports (for whatever reason) ensure we still have a silent one
   if (transports.length === 0) {
     transports.push(new winston.transports.Console({ silent: true }));
   }
@@ -142,11 +156,14 @@ logger.logError = (error, context = {}) => {
   });
 };
 
-// Log startup info
-logger.info(`Logger initialized`, {
-  level: LOG_LEVEL,
-  environment: NODE_ENV,
-  loggingEnabled: ENABLE_LOGGING
-});
-
+// Log startup info (or warn if completely disabled)
+if (ENABLE_LOGGING) {
+  logger.info(`Logger initialized`, {
+    level: LOG_LEVEL,
+    environment: NODE_ENV,
+    loggingEnabled: ENABLE_LOGGING
+  });
+} else {
+  console.warn('Logger is disabled (ENABLE_LOGGING=false) - no output will be recorded');
+}
 export default logger;

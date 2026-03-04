@@ -7,7 +7,7 @@ import { sendInquiryNotification, sendInquiryConfirmation } from "../utils/email
 import Inquiry from "../models/Inquiry.js";
 import logger from "../utils/logger.js";
 import { NotFoundError, BadRequestError } from "../utils/errors.js";
-import {generateProposal} from "../services/generateProposal.js";
+import { generateProposal, generateProposalPDF } from "../services/generateProposal.js";
 const router = express.Router();
 
 /**
@@ -55,23 +55,17 @@ router.post("/", createInquiryValidation, validateRequest, sanitizeInput, async 
 			logger.error("Failed to send inquiry emails:", { error: emailError.message, inquiryId: inquiry._id });
 		});
 
-		// generateProposal({
-		// 	templateType: "smallStaticproposal",
-		// 	count: inquiry.inquiryNumber,
-		// 	variables: {
-		// 		client: inquiry.name,
-		// 		company: inquiry.company,
-		// 		development_cost: "₹45,000",
-		// 		gst_amount: "₹8,100",
-		// 		total_amount: "₹53,100",
-		// 	},
-		// })
-		// 	.then((res) => {
-		// 		console.log("Proposal Generated:", res);
-		// 	})
-		// 	.catch((err) => {
-		// 		console.error(err);
-		// 	});
+		await generateProposalPDF({
+			templatePath: "./proposal/docs/static_basic.html",
+			outputDir: "./output",
+			data: { date: "04 March 2026", number: "QTN-2026-001", company: "Tech Corp Pvt Ltd", client: "Mr. Rajesh Kumar" },
+		})
+			.then((res) => {
+				console.log("Proposal Generated:", res);
+			})
+			.catch((err) => {
+				console.error(err);
+			});
 
 		logger.info("Inquiry submitted", {
 			inquiryId: inquiry._id,

@@ -66,7 +66,7 @@ const adminSchema = new mongoose.Schema({
 });
 
 // Indexes
-adminSchema.index({ email: 1 });
+// email field already defines unique: true which creates an index
 adminSchema.index({ role: 1, isActive: 1 });
 
 // Virtual for checking if account is locked

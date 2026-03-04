@@ -3,7 +3,8 @@ import path from "path";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import { exec } from "child_process";
-
+import html_to_pdf from "html-pdf-node";
+import puppeteer from "puppeteer";
 // __dirname workaround for ES modules
 import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
@@ -71,29 +72,23 @@ export async function generateProposal({
     if (!templateType) throw new Error("Template type is required");
     if (!count) throw new Error("Proposal count is required");
 
-    // const allowedTemplates = ["static", "dynamic", "ecommerce", "enterprise"];
-    // if (!allowedTemplates.includes(templateType)) {
-    //   throw new Error("Invalid template type");
-    // }
+    /* Determine template path and extension */
+    const proposalsDir = path.resolve(__dirname, "../proposal");
+    let ext = path.extname(templateType);
+    let baseName = templateType;
 
-    /* Load Template */
-    const templatePath = path.resolve(
-      __dirname,
-      "../proposal",
-      `${templateType}.docx`
-    );
+    // allow callers to pass either 'foo' or 'foo.docx'/'foo.html'
+    if (ext) {
+      baseName = path.basename(templateType, ext);
+    } else {
+      // default to docx unless html flag is present in variables
+      ext = variables.html ? '.html' : '.docx';
+    }
 
+    const templatePath = path.join(proposalsDir, `${baseName}${ext}`);
     if (!fs.existsSync(templatePath)) {
       throw new Error("Template file not found");
     }
-
-    const content = fs.readFileSync(templatePath, "binary");
-    const zip = new PizZip(content);
-
-    const doc = new Docxtemplater(zip, {
-      paragraphLoop: true,
-      linebreaks: true,
-    });
 
     /* Auto Fields */
     const autoFields = {
@@ -106,15 +101,45 @@ export async function generateProposal({
       ...variables,
     };
 
-    doc.setData(finalData);
-    doc.render();
-
-    /* Ensure Output Folder Exists */
+    // ensure output directory exists once
     const outputDir = path.resolve(__dirname, "output");
-
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir);
     }
+
+    /* when template is HTML we do simple text substitution */
+    if (ext === '.html') {
+      let html = fs.readFileSync(templatePath, 'utf-8');
+
+      // basic mustache-style replacement {{key}}
+      html = html.replace(/{{\s*([^}]+)\s*}}/g, (match, p1) => {
+        const val = finalData[p1];
+        return val !== undefined && val !== null ? String(val) : '';
+      });
+
+      const fileName = `Proposal-${finalData.company || "Client"}-${autoFields.number}.html`;
+      const outPath = path.join(outputDir, fileName);
+      fs.writeFileSync(outPath, html, 'utf-8');
+
+      return {
+        success: true,
+        number: autoFields.number,
+        date: autoFields.date,
+        htmlPath: outPath
+      };
+    }
+
+    // otherwise assume docx (existing behaviour)
+    const content = fs.readFileSync(templatePath, "binary");
+    const zip = new PizZip(content);
+
+    const doc = new Docxtemplater(zip, {
+      paragraphLoop: true,
+      linebreaks: true,
+    });
+
+    doc.setData(finalData);
+    doc.render();
 
     /* File Name */
     const fileName = `Proposal-${finalData.company || "Client"}-${autoFields.number}`;
@@ -143,4 +168,51 @@ export async function generateProposal({
     console.error("Proposal Generation Error:", error);
     throw error;
   }
+}
+
+
+
+export async function generateProposalPDF({
+  templatePath,
+  outputDir,
+  data
+}) {
+
+  let html = fs.readFileSync(templatePath, "utf8");
+
+  Object.keys(data).forEach(key => {
+    const regex = new RegExp(`{${key}}`, "g");
+    html = html.replace(regex, data[key]);
+  });
+
+  const safeCompany = data.company.replace(/[^a-zA-Z0-9]/g, "-");
+
+  const fileName = `Proposal-${safeCompany}-${data.number}.pdf`;
+
+  const filePath = path.join(outputDir, fileName);
+
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+
+  const page = await browser.newPage();
+
+  await page.setContent(html, {
+    waitUntil: "networkidle0"
+  });
+
+  await page.pdf({
+    path: filePath,
+    format: "A4",
+    printBackground: true
+  });
+
+  await browser.close();
+
+  return {
+    success: true,
+    path: filePath
+  };
+
 }

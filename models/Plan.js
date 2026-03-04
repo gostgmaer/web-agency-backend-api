@@ -178,7 +178,7 @@ const planSchema = new mongoose.Schema({
 planSchema.index({ isActive: 1, isArchived: 1 });
 planSchema.index({ category: 1 });
 planSchema.index({ order: 1 });
-planSchema.index({ slug: 1 });
+// slug is unique on the schema
 planSchema.index({ billingCycle: 1 });
 planSchema.index({ price: 1 });
 planSchema.index({ targetAudience: 1 });

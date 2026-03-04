@@ -98,7 +98,7 @@ blogSchema.index({ isPublished: 1, isDeleted: 1 });
 blogSchema.index({ categories: 1 });
 blogSchema.index({ tags: 1 });
 blogSchema.index({ publishedAt: -1 });
-blogSchema.index({ slug: 1 });
+// slug is unique on the schema
 blogSchema.index({ author: 1 });
 blogSchema.index({ createdAt: -1 });
 
