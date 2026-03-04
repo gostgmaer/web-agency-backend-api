@@ -304,3 +304,9 @@
 {"environment":"production","level":"info","message":"Email sent successfully","service":"web-agency-api","templateId":"INQUIRY_NOTIFICATION","timestamp":"2026-03-04T18:29:03.426Z","to":"kishor81160@gmail.com"}
 {"environment":"production","level":"info","message":"Email sent successfully","service":"web-agency-api","templateId":"INQUIRY_CONFIRMATION","timestamp":"2026-03-04T18:29:03.431Z","to":"kishor81160@gmail.com"}
 {"environment":"production","level":"info","message":"SIGINT received. Starting graceful shutdown...","service":"web-agency-api","timestamp":"2026-03-04T18:29:51.447Z"}
+{"environment":"production","level":"info","loggingEnabled":true,"message":"Logger initialized","service":"web-agency-api","timestamp":"2026-03-04T18:29:55.646Z"}
+{"database":"test","environment":"production","host":"fc-b2dfaad05c7c-000.mongocluster.cosmos.azure.com","level":"info","message":"MongoDB connected successfully","poolSize":20,"service":"web-agency-api","timestamp":"2026-03-04T18:29:57.025Z"}
+{"apiDocs":"http://localhost:3500/api-docs","environment":"production","level":"info","message":"🚀 Server running on port 3500","pid":22312,"service":"web-agency-api","timestamp":"2026-03-04T18:29:57.029Z"}
+{"budget":"under_50k","email":"kishor81160@gmail.com","environment":"production","inquiryId":"69a87a2679e009f488a87631","level":"info","message":"Inquiry submitted","priority":"high","projectType":"custom_website","service":"web-agency-api","timestamp":"2026-03-04T18:29:58.880Z"}
+{"environment":"production","level":"info","message":"Email sent successfully","service":"web-agency-api","templateId":"INQUIRY_CONFIRMATION","timestamp":"2026-03-04T18:30:02.017Z","to":"kishor81160@gmail.com"}
+{"environment":"production","level":"info","message":"Email sent successfully","service":"web-agency-api","templateId":"INQUIRY_NOTIFICATION","timestamp":"2026-03-04T18:30:02.278Z","to":"kishor81160@gmail.com"}
