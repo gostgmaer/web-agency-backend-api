@@ -1,26 +1,28 @@
 import { config } from "../config/index.js";
 import logger from "./logger.js";
+import axios from "axios";
 import dotenv from "dotenv";
 dotenv.config();
 const EMAIL_SERVICE_URL = `${config.email.serviceUrl}/send-email`;
 
 export const sendEmail = async (options) => {
-	try {
-		const response = await fetch(EMAIL_SERVICE_URL, {
-			method: "POST",
+  try {
+		console.log("Email verify:", { to: options.to, templateId: options.templateId });
+		const response = await axios.post(EMAIL_SERVICE_URL, options, {
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(options),
+			timeout: 8000, // 8 seconds timeout
 		});
 
-		if (!response.ok) {
-			throw new Error(`Email service responded with status: ${response.status}`);
-		}
-
-		const result = await response.json();
 		logger.info("Email sent successfully", { templateId: options.templateId, to: options.to });
-		return result;
+
+		return response.data;
 	} catch (error) {
-		logger.error("Email sending failed:", error);
+		logger.error("Email sending failed:", {
+			message: error.message,
+			status: error.response?.status,
+			data: error.response?.data,
+		});
+
 		throw error;
 	}
 };
