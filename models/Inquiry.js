@@ -9,196 +9,156 @@ const counterSchema = new mongoose.Schema({
 // we create the model here so it can be reused by other modules if needed
 const Counter = mongoose.model('Counter', counterSchema);
 
-const inquirySchema = new mongoose.Schema({
-  // Contact Information
-  name: {
-    type: String,
-    required: [true, 'Name is required'],
-    trim: true,
-    maxlength: [100, 'Name cannot exceed 100 characters']
-  },
-  email: {
-    type: String,
-    required: [true, 'Email is required'],
-    lowercase: true,
-    trim: true,
-    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
-  },
-  phone: {
-    type: String,
-    trim: true,
-    maxlength: [20, 'Phone number cannot exceed 20 characters']
-  },
-  company: {
-    type: String,
-    trim: true,
-    maxlength: [100, 'Company name cannot exceed 100 characters']
-  },
-  website: {
-    type: String,
-    trim: true,
-    maxlength: [200, 'Website URL cannot exceed 200 characters']
-  },
+export const SERVICE_OPTIONS = [
+	{ key: "custom_website", label: "Custom Website & Web App Development" },
+	{ key: "backend_api", label: "Scalable Backend Development & API Integration" },
+	{ key: "admin_dashboard", label: "Admin Dashboard & Internal Tools" },
+	{ key: "bug_fixing", label: "Bug Fixing, Optimization & Performance Enhancements" },
+	{ key: "payment_integration", label: "Payment Gateway Setup & Integration" },
+	{ key: "third_party_integration", label: "Third-Party API & Plugin Integrations" },
+	{ key: "auth_setup", label: "Secure Authentication & User Management" },
+	{ key: "realtime_features", label: "Real-Time Features (Chat, Notifications, Live Updates)" },
+	{ key: "seo_friendly", label: "SEO-Optimized Web Development" },
+	{ key: "consultation", label: "Product Strategy & Technical Consultation" },
+	{ key: "maintenance", label: "Ongoing Maintenance & Support" },
+];
 
-  // Project Details
-  projectType: {
-    type: String,
-    enum: {
-      values: ['website', 'webapp', 'mobile', 'ecommerce', 'redesign', 'maintenance', 'consulting', 'other'],
-      message: '{VALUE} is not a valid project type'
-    },
-    required: [true, 'Project type is required']
-  },
-  budget: {
-    type: String,
-    enum: {
-      values: ['under-5k', '5k-10k', '10k-25k', '25k-50k', '50k-100k', 'over-100k', 'not-sure'],
-      message: '{VALUE} is not a valid budget range'
-    },
-    required: [true, 'Budget is required']
-  },
-  timeline: {
-    type: String,
-    enum: {
-      values: ['asap', '1-month', '2-3months', '3-6months', '6months+', 'flexible'],
-      message: '{VALUE} is not a valid timeline'
-    },
-    required: [true, 'Timeline is required']
-  },
-  description: {
-    type: String,
-    required: [true, 'Description is required'],
-    maxlength: [5000, 'Description cannot exceed 5000 characters']
-  },
-  requirements: [{
-    type: String,
-    trim: true
-  }],
-  attachments: [{
-    filename: String,
-    url: String,
-    size: Number,
-    uploadedAt: { type: Date, default: Date.now }
-  }],
+export const BUDGET_RANGES = [
+	{ key: "under_50k", label: "Under ₹50,000" },
+	{ key: "50k_150k", label: "₹50,000 – ₹1,50,000" },
+	{ key: "150k_500k", label: "₹1,50,000 – ₹5,00,000" },
+	{ key: "500k_1500k", label: "₹5,00,000 – ₹15,00,000" },
+	{ key: "1500k_plus", label: "₹15,00,000+" },
+	{ key: "discuss", label: "Let's Discuss" },
+];
+export const TIMELINE_OPTIONS = [
+	{ key: "2_weeks", label: "2 Weeks" },
+	{ key: "4_6_weeks", label: "4-6 Weeks" },
+	{ key: "6_8_weeks", label: "6-8 Weeks" },
+	{ key: "8_12_weeks", label: "8-12 Weeks" },
+	{ key: "12_14_weeks", label: "12-14 Weeks" },
+	{ key: "6_months_plus", label: "6+ Months" },
+	{ key: "flexible", label: "Flexible" },
+];
 
-  // Sequential identifier for tracking inquiries
-  inquiryNumber: {
-    type: Number,
-    unique: true,
-    index: true
-  },
+const inquirySchema = new mongoose.Schema(
+	{
+		// Contact Information
+		name: {
+			type: String,
+			required: [true, "Name is required"],
+			trim: true,
+			maxlength: [100, "Name cannot exceed 100 characters"],
+		},
+		email: {
+			type: String,
+			required: [true, "Email is required"],
+			lowercase: true,
+			trim: true,
+			match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, "Please enter a valid email"],
+		},
+		phone: { type: String, trim: true, maxlength: [20, "Phone number cannot exceed 20 characters"] },
+		company: { type: String, trim: true, maxlength: [100, "Company name cannot exceed 100 characters"] },
+		website: { type: String, trim: true, maxlength: [200, "Website URL cannot exceed 200 characters"] },
 
-  // Status & Assignment
-  status: {
-    type: String,
-    enum: {
-      values: ['new', 'reviewing', 'contacted', 'quoted', 'negotiating', 'accepted', 'rejected', 'completed', 'cancelled'],
-      message: '{VALUE} is not a valid status'
-    },
-    default: 'new'
-  },
-  priority: {
-    type: String,
-    enum: {
-      values: ['low', 'medium', 'high', 'urgent'],
-      message: '{VALUE} is not a valid priority'
-    },
-    default: 'medium'
-  },
-  assignedTo: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Admin'
-  },
+		// Project Details
+		projectType: {
+			type: String,
+			enum: {
+				values: { values: SERVICE_OPTIONS.map((t) => t.key), message: "{VALUE} is not a valid project type" },
+				message: "{VALUE} is not a valid project type",
+			},
+			required: [true, "Project type is required"],
+		},
+		budget: {
+			type: String,
+			enum: { values: BUDGET_RANGES.map((t) => t.key), message: "{VALUE} is not a valid budget range" },
+			required: [true, "Budget is required"],
+		},
+		timeline: {
+			type: String,
+			enum: { values: TIMELINE_OPTIONS.map((t) => t.key), message: "{VALUE} is not a valid timeline" },
+			required: [true, "Timeline is required"],
+		},
+		description: {
+			type: String,
+			required: [true, "Description is required"],
+			maxlength: [5000, "Description cannot exceed 5000 characters"],
+		},
+		requirements: [{ type: String, trim: true }],
+		attachments: [{ filename: String, url: String, size: Number, uploadedAt: { type: Date, default: Date.now } }],
 
-  // Quoting
-  quotedAmount: {
-    type: Number,
-    min: 0
-  },
-  quotedCurrency: {
-    type: String,
-    default: 'USD',
-    maxlength: 3
-  },
-  quotedAt: {
-    type: Date
-  },
-  quotedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Admin'
-  },
+		// Sequential identifier for tracking inquiries
+		inquiryNumber: { type: Number, unique: true, index: true },
 
-  // Notes and History
-  notes: [{
-    content: {
-      type: String,
-      required: true,
-      maxlength: 2000
-    },
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Admin',
-      required: true
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now
-    },
-    isInternal: {
-      type: Boolean,
-      default: true
-    }
-  }],
+		// Status & Assignment
+		status: {
+			type: String,
+			enum: {
+				values: [
+					"new",
+					"reviewing",
+					"contacted",
+					"quoted",
+					"negotiating",
+					"accepted",
+					"rejected",
+					"completed",
+					"cancelled",
+				],
+				message: "{VALUE} is not a valid status",
+			},
+			default: "new",
+		},
+		priority: {
+			type: String,
+			enum: { values: ["low", "medium", "high", "urgent"], message: "{VALUE} is not a valid priority" },
+			default: "medium",
+		},
+		assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
 
-  // Status History for tracking changes
-  statusHistory: [{
-    status: String,
-    changedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Admin'
-    },
-    changedAt: {
-      type: Date,
-      default: Date.now
-    },
-    note: String
-  }],
+		// Quoting
+		quotedAmount: { type: Number, min: 0 },
+		quotedCurrency: { type: String, default: "USD", maxlength: 3 },
+		quotedAt: { type: Date },
+		quotedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
 
-  // Follow-up
-  nextFollowUp: {
-    type: Date
-  },
-  lastContactedAt: {
-    type: Date
-  },
+		// Notes and History
+		notes: [
+			{
+				content: { type: String, required: true, maxlength: 2000 },
+				createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", required: true },
+				createdAt: { type: Date, default: Date.now },
+				isInternal: { type: Boolean, default: true },
+			},
+		],
 
-  // Metadata
-  ipAddress: {
-    type: String
-  },
-  userAgent: {
-    type: String
-  },
-  source: {
-    type: String,
-    enum: ['website', 'referral', 'social', 'email', 'phone', 'other'],
-    default: 'website'
-  },
-  referrer: {
-    type: String
-  },
+		// Status History for tracking changes
+		statusHistory: [
+			{
+				status: String,
+				changedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
+				changedAt: { type: Date, default: Date.now },
+				note: String,
+			},
+		],
 
-  // Soft delete
-  isDeleted: {
-    type: Boolean,
-    default: false
-  },
-  deletedAt: {
-    type: Date
-  }
-}, {
-  timestamps: true
-});
+		// Follow-up
+		nextFollowUp: { type: Date },
+		lastContactedAt: { type: Date },
+
+		// Metadata
+		ipAddress: { type: String },
+		userAgent: { type: String },
+		source: { type: String, enum: ["website", "referral", "social", "email", "phone", "other"], default: "website" },
+		referrer: { type: String },
+
+		// Soft delete
+		isDeleted: { type: Boolean, default: false },
+		deletedAt: { type: Date },
+	},
+	{ timestamps: true },
+);
 
 // Indexes
 inquirySchema.index({ status: 1 });

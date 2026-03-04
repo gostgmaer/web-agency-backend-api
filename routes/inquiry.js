@@ -10,6 +10,21 @@ import { NotFoundError, BadRequestError } from "../utils/errors.js";
 import { generateProposal, generateProposalPDF } from "../services/generateProposal.js";
 const router = express.Router();
 
+
+export const formatInquiry = (inquiry) => {
+	const obj = inquiry.toObject ? inquiry.toObject() : inquiry;
+
+	return {
+		...obj,
+		projectType: SERVICE_OPTIONS.find((s) => s.key === obj.projectType)?.label || obj.projectType,
+		budget: BUDGET_RANGES.find((b) => b.key === obj.budget)?.label || obj.budget,
+		timeline: TIMELINE_OPTIONS.find((t) => t.key === obj.timeline)?.label || obj.timeline,
+	};
+};
+
+export const mapInquiryListLabels = (inquiries = []) => {
+	return inquiries.map(formatInquiry);
+};
 /**
  * @swagger
  * /api/inquiry:
@@ -41,10 +56,22 @@ const router = express.Router();
 router.post("/", createInquiryValidation, validateRequest, sanitizeInput, async (req, res, next) => {
 	try {
 		const inquiryData = {
-			...req.body,
+			name: req.body.name || req.body.client?.name,
+			email: req.body.email || req.body.client?.email,
+			phone: req.body.phone || req.body.client?.phone,
+			company: req.body.company || req.body.client?.companyName,
+			website: req.body.website || req.body.client?.websiteUrl,
+			projectType: req.body.projectType || req.body.projectDetails?.servicesInterested?.[0],
+			budget: req.body.budget || req.body.projectDetails?.budgetRange,
+			timeline: req.body.timeline || req.body.projectDetails?.timelinePreference,
+			description: req.body.description || req.body.message?.body,
+			requirements: req.body.requirements || req.body.preferences?.requirements,
+			attachments: req.body.attachments,
+			preferredContactMethod: req.body.preferredContactMethod || req.body.preferences?.preferredContactMethod,
+			source: req.body.source,
+			referrer: req.body.referrer,
 			ipAddress: req.ip,
-			userAgent: req.get("User-Agent"),
-			referrer: req.get("Referer"),
+			userAgent: req.headers["user-agent"],
 		};
 
 		const inquiry = new Inquiry(inquiryData);
@@ -54,18 +81,6 @@ router.post("/", createInquiryValidation, validateRequest, sanitizeInput, async 
 		Promise.all([sendInquiryNotification(inquiry), sendInquiryConfirmation(inquiry)]).catch((emailError) => {
 			logger.error("Failed to send inquiry emails:", { error: emailError.message, inquiryId: inquiry._id });
 		});
-
-		await generateProposalPDF({
-			templatePath: "./proposal/docs/static_basic.html",
-			outputDir: "./output",
-			data: { date: "04 March 2026", number: "QTN-2026-001", company: "Tech Corp Pvt Ltd", client: "Mr. Rajesh Kumar" },
-		})
-			.then((res) => {
-				console.log("Proposal Generated:", res);
-			})
-			.catch((err) => {
-				console.error(err);
-			});
 
 		logger.info("Inquiry submitted", {
 			inquiryId: inquiry._id,
@@ -144,7 +159,7 @@ router.get("/", authenticate, async (req, res, next) => {
 			.sort({ createdAt: -1 })
 			.skip(skip)
 			.limit(limit);
-
+	inquiries = mapInquiryListLabels(inquiries);
 		const pagination = getPaginationMeta(total, page, limit);
 
 		res.json({ success: true, message: "Inquiries retrieved successfully", data: { inquiries, pagination } });
