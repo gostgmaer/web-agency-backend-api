@@ -7,7 +7,8 @@ import { config } from "./config/index.js";
 dotenv.config();
 
 const PORT = config.app.port || 3000;
-const SHUTDOWN_TIMEOUT = parseInt(config.app.shutdownTimeout) || 10000;
+const REQUEST_TIMEOUT = Number(config.performance.requestTimeout) || 30000;
+const SHUTDOWN_TIMEOUT = Number(config.performance.shutdownTimeout) || 10000;
 
 let server;
 let isShuttingDown = false;
@@ -101,7 +102,7 @@ const startServer = async () => {
     });
 
     // Set server timeout
-    server.timeout = 30000; // 30 seconds
+    server.timeout = REQUEST_TIMEOUT;
     server.keepAliveTimeout = 65000; // Slightly higher than ALB timeout
     server.headersTimeout = 66000; // Slightly higher than keepAliveTimeout
 
