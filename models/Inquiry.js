@@ -61,13 +61,13 @@ const inquirySchema = new mongoose.Schema(
 		company: { type: String, trim: true, maxlength: [100, "Company name cannot exceed 100 characters"] },
 		website: { type: String, trim: true, maxlength: [200, "Website URL cannot exceed 200 characters"] },
 
+		// Subject / plan name submitted with the inquiry
+		subject: { type: String, trim: true, maxlength: [200, "Subject cannot exceed 200 characters"] },
+
 		// Project Details
 		projectType: {
 			type: String,
-			enum: {
-				values: { values: SERVICE_OPTIONS.map((t) => t.key), message: "{VALUE} is not a valid project type" },
-				message: "{VALUE} is not a valid project type",
-			},
+			enum: { values: SERVICE_OPTIONS.map((t) => t.key), message: "{VALUE} is not a valid project type" },
 			required: [true, "Project type is required"],
 		},
 		budget: {
@@ -87,6 +87,32 @@ const inquirySchema = new mongoose.Schema(
 		},
 		requirements: [{ type: String, trim: true }],
 		attachments: [{ filename: String, url: String, size: Number, uploadedAt: { type: Date, default: Date.now } }],
+
+		// Communication preference
+		preferredContactMethod: {
+			type: String,
+			enum: { values: ["Email", "Phone", "WhatsApp"], message: "{VALUE} is not a valid contact method" },
+			default: "Email",
+		},
+
+		// Client consent (from form submission)
+		newsletterOptIn: { type: Boolean, default: false },
+		privacyConsent: { type: Boolean, default: false },
+
+		// Admin tags for categorization
+		tags: [{ type: String, trim: true, maxlength: 50 }],
+
+		// CRM lifecycle tracking
+		proposalSent: { type: Boolean, default: false },
+		proposalSentAt: { type: Date },
+		proposalUrl: { type: String, trim: true },
+		meetingScheduledAt: { type: Date },
+		contractSignedAt: { type: Date },
+		projectStartedAt: { type: Date },
+		projectCompletedAt: { type: Date },
+
+		// Estimated deal value set by admin (INR)
+		estimatedProjectValue: { type: Number, min: 0 },
 
 		// Sequential identifier for tracking inquiries
 		inquiryNumber: { type: Number, unique: true, index: true },
@@ -169,12 +195,16 @@ inquirySchema.index({ assignedTo: 1 });
 inquirySchema.index({ email: 1 });
 inquirySchema.index({ isDeleted: 1 });
 inquirySchema.index({ nextFollowUp: 1 });
+inquirySchema.index({ tags: 1 });
+inquirySchema.index({ proposalSent: 1 });
+inquirySchema.index({ newsletterOptIn: 1 });
 
 // Text search
 inquirySchema.index({
   name: 'text',
   email: 'text',
   company: 'text',
+  subject: 'text',
   description: 'text'
 }, {
   name: 'InquiryTextIndex'
@@ -196,8 +226,8 @@ inquirySchema.pre('save', async function (next) {
     }
 
     // --- priority logic ---------------------------------------------------------
-    const highBudgets = ['50k-100k', 'over-100k'];
-    const mediumBudgets = ['25k-50k', '10k-25k'];
+    const highBudgets = ['500k_1500k', '1500k_plus'];
+    const mediumBudgets = ['150k_500k', '50k_150k'];
 
     if (highBudgets.includes(this.budget)) {
       this.priority = 'high';
@@ -205,8 +235,8 @@ inquirySchema.pre('save', async function (next) {
       this.priority = 'medium';
     }
 
-    // ASAP timeline increases priority
-    if (this.timeline === 'asap' && this.priority !== 'urgent') {
+    // Short timeline increases priority
+    if (this.timeline === '2_weeks' && this.priority !== 'urgent') {
       this.priority = this.priority === 'high' ? 'urgent' : 'high';
     }
   }

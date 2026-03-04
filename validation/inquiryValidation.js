@@ -1,4 +1,10 @@
 import { body, param } from 'express-validator';
+import { SERVICE_OPTIONS, BUDGET_RANGES, TIMELINE_OPTIONS } from '../models/Inquiry.js';
+
+// Extract valid keys from the options
+const validProjectTypes = SERVICE_OPTIONS.map(s => s.key);
+const validBudgets = BUDGET_RANGES.map(b => b.key);
+const validTimelines = TIMELINE_OPTIONS.map(t => t.key);
 
 export const createInquiryValidation = [
   body('name')
@@ -19,23 +25,32 @@ export const createInquiryValidation = [
     .trim()
     .isLength({ max: 100 })
     .withMessage('Company name must be less than 100 characters'),
+  body('subject')
+    .optional()
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage('Subject must be less than 200 characters'),
   body('projectType')
-    .isIn(['website', 'webapp', 'mobile', 'ecommerce', 'other'])
+    .isIn(validProjectTypes)
     .withMessage('Invalid project type'),
   body('budget')
-    .isIn(['under-5k', '5k-10k', '10k-25k', '25k-50k', 'over-50k'])
+    .isIn(validBudgets)
     .withMessage('Invalid budget range'),
   body('timeline')
-    .isIn(['asap', '1-month', '2-3months', '3-6months', 'flexible'])
+    .isIn(validTimelines)
     .withMessage('Invalid timeline'),
   body('description')
     .trim()
-    .isLength({ min: 1, max: 2000 })
-    .withMessage('Description is required and must be less than 2000 characters'),
+    .isLength({ min: 1, max: 5000 })
+    .withMessage('Description is required and must be less than 5000 characters'),
   body('requirements')
     .optional()
     .isArray()
-    .withMessage('Requirements must be an array')
+    .withMessage('Requirements must be an array'),
+  body('preferredContactMethod')
+    .optional()
+    .isIn(['Email', 'Phone', 'WhatsApp'])
+    .withMessage('Invalid contact method'),
 ];
 
 export const inquiryIdValidation = [
