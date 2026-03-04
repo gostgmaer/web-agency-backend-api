@@ -6,6 +6,7 @@ import { loginValidation } from '../validation/authValidation.js';
 import Admin from '../models/Admin.js';
 import logger from '../utils/logger.js';
 import { AuthenticationError, BadRequestError } from '../utils/errors.js';
+import { config } from "../config/index.js";
 
 const router = express.Router();
 
@@ -89,16 +90,12 @@ router.post('/login', loginValidation, validateRequest, async (req, res, next) =
       role: admin.role
     };
 
-    const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
-    });
+    const token = jwt.sign(tokenPayload, config.jwt.secret, { expiresIn: config.jwt.expire || "7d" });
 
     // Generate refresh token (optional)
-    const refreshToken = jwt.sign(
-      { id: admin._id },
-      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    const refreshToken = jwt.sign({ id: admin._id }, config.jwt.refreshSecret || config.jwt.secret, {
+			expiresIn: "30d",
+		});
 
     logger.info('Admin logged in successfully', {
       email: admin.email,
@@ -106,15 +103,10 @@ router.post('/login', loginValidation, validateRequest, async (req, res, next) =
     });
 
     res.json({
-      success: true,
-      message: 'Login successful',
-      data: {
-        admin: admin.toJSON(),
-        token,
-        refreshToken,
-        expiresIn: process.env.JWT_EXPIRES_IN || '7d'
-      }
-    });
+			success: true,
+			message: "Login successful",
+			data: { admin: admin.toJSON(), token, refreshToken, expiresIn: config.jwt.expire || "7d" },
+		});
   } catch (error) {
     next(error);
   }
@@ -136,10 +128,7 @@ router.post('/refresh', async (req, res, next) => {
     }
 
     // Verify refresh token
-    const decoded = jwt.verify(
-      refreshToken,
-      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET
-    );
+    const decoded = jwt.verify(refreshToken, config.jwt.refreshSecret || config.jwt.secret);
 
     const admin = await Admin.findById(decoded.id);
 
@@ -148,11 +137,9 @@ router.post('/refresh', async (req, res, next) => {
     }
 
     // Generate new access token
-    const token = jwt.sign(
-      { id: admin._id, email: admin.email, role: admin.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    const token = jwt.sign({ id: admin._id, email: admin.email, role: admin.role }, config.jwt.secret, {
+			expiresIn: config.jwt.expire || "7d",
+		});
 
     res.json({
       success: true,

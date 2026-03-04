@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import Admin from '../models/Admin.js';
 import { connectDatabase } from '../config/database.js';
+import { config } from "../config/index.js";
 
 dotenv.config();
 
@@ -10,8 +11,8 @@ const createAdmin = async () => {
   try {
     await connectDatabase();
 
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@webagency.com';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    const adminEmail = config.admin.email || "admin@webagency.com";
+		const adminPassword = config.admin.password || "admin123";
 
     // Check if admin already exists
     const existingAdmin = await Admin.findOne({ email: adminEmail });

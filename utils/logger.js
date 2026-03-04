@@ -1,27 +1,18 @@
 
 import winston from 'winston';
 import pkg from 'dotenv';
+import { config } from "../config/index.js";
 
-const NODE_ENV = process.env.NODE_ENV || 'development';
+const NODE_ENV = config.app.nodeEnv || "development";
 
 // Enable logging if the environment variable is omitted or set to
 // 'true'.  Setting it explicitly to 'false' will disable all transports
 // except the silent fallback.  In development we usually want logs on
 // regardless of the flag, so this mirrors the original behaviour.
-const ENABLE_LOGGING =
-  process.env.ENABLE_LOGGING === undefined ? true :
-  process.env.ENABLE_LOGGING.toLowerCase() === 'true';
+const ENABLE_LOGGING = config.logging.enabled === undefined ? true : config.logging.enabled === true;
 
-const LOG_LEVEL = process.env.LOG_LEVEL || (NODE_ENV === 'production' ? 'info' : 'debug');
+const LOG_LEVEL = config.logging.level || (NODE_ENV === "production" ? "info" : "debug");
 
-// Detect serverless/read-only filesystem environments
-const IS_SERVERLESS = !!(
-  process.env.VERCEL ||
-  process.env.AWS_LAMBDA_FUNCTION_NAME ||
-  process.env.NETLIFY ||
-  process.env.SERVERLESS ||
-  process.env.DISABLE_FILE_LOGGING === 'true'
-);
 
 /**
  * Custom log format for console output
@@ -67,28 +58,28 @@ const createLogger = () => {
   }
 
   // File transports - only in production when NOT in serverless environment
-  if (ENABLE_LOGGING && NODE_ENV === 'production' && !IS_SERVERLESS) {
-    try {
-      transports.push(
-        new winston.transports.File({
-          filename: 'logs/error.log',
-          level: 'error',
-          format: fileFormat,
-          maxsize: 5242880, // 5MB
-          maxFiles: 5
-        }),
-        new winston.transports.File({
-          filename: 'logs/combined.log',
-          format: fileFormat,
-          maxsize: 5242880, // 5MB
-          maxFiles: 5
-        })
-      );
-    } catch (err) {
-      // Silently skip file logging if directory creation fails
-      console.warn('File logging disabled - could not create logs directory');
-    }
-  }
+  if (ENABLE_LOGGING && NODE_ENV === "production" && !config.app.isServerless) {
+		try {
+			transports.push(
+				new winston.transports.File({
+					filename: "logs/error.log",
+					level: "error",
+					format: fileFormat,
+					maxsize: 5242880, // 5MB
+					maxFiles: 5,
+				}),
+				new winston.transports.File({
+					filename: "logs/combined.log",
+					format: fileFormat,
+					maxsize: 5242880, // 5MB
+					maxFiles: 5,
+				}),
+			);
+		} catch (err) {
+			// Silently skip file logging if directory creation fails
+			console.warn("File logging disabled - could not create logs directory");
+		}
+	}
 
   // If no transports (for whatever reason) ensure we still have a silent one
   if (transports.length === 0) {

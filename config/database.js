@@ -1,7 +1,8 @@
 import mongoose from 'mongoose';
 import logger from '../utils/logger.js';
+import { config } from "./index.js";
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/web-agency';
+const MONGODB_URI = config.database.mongoUri;
 
 /**
  * MongoDB connection options optimized for performance
@@ -86,10 +87,10 @@ mongoose.connection.on('reconnected', () => {
 });
 
 // Monitor connection pool (for debugging)
-if (process.env.NODE_ENV === 'development') {
-  mongoose.connection.on('connected', () => {
-    logger.debug('MongoDB connection pool established');
-  });
+if (config.app.nodeEnv === "development") {
+	mongoose.connection.on("connected", () => {
+		logger.debug("MongoDB connection pool established");
+	});
 }
 
 export default mongoose;

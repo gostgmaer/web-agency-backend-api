@@ -23,11 +23,12 @@ import inquiryRoutes from "./routes/inquiry.js";
 import planRoutes from "./routes/plans.js";
 
 import logger from "./utils/logger.js";
+import { config } from "./config/index.js";
 
 dotenv.config();
 
 const app = express();
-const isDevelopment = process.env.NODE_ENV !== 'production';
+const isDevelopment = config.app.nodeEnv !== "production";
 
 /**
  * Request ID middleware - adds unique ID for request tracking
@@ -140,11 +141,11 @@ app.use(helmet({
 }));
 
 // CORS configuration
-const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean)
-  .map((origin) => origin.replace(/\/$/, ""));
+const corsOriginsRaw = config.app.corsOrigins ?? [];
+const allowedOrigins = (Array.isArray(corsOriginsRaw) ? corsOriginsRaw : String(corsOriginsRaw).split(","))
+	.map((origin) => origin.trim())
+	.filter(Boolean)
+	.map((origin) => origin.replace(/\/$/, ""));
 
 app.use(
   cors({
@@ -183,8 +184,8 @@ app.use(mongoSanitize());
 // app.use(requestLogger);
 
 // API Docs (only in development/staging)
-if (isDevelopment || process.env.ENABLE_SWAGGER === 'true') {
-  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
+if (isDevelopment || config.app.enableSwagger === "true") {
+	app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
 }
 
 // Apply stricter rate limit to auth routes
@@ -203,23 +204,23 @@ app.use("/api/plans", planRoutes);
  */
 app.get("/api/health", (req, res) => {
   const healthData = {
-    status: "healthy",
-    timestamp: new Date().toISOString(),
-    uptime: Math.floor(process.uptime()),
-    environment: process.env.NODE_ENV || 'development',
-    version: process.env.npm_package_version || '1.0.0'
-  };
+		status: "healthy",
+		timestamp: new Date().toISOString(),
+		uptime: Math.floor(process.uptime()),
+		environment: config.app.nodeEnv || "development",
+		version: config.app.version || "1.0.0",
+	};
 
   // Add detailed metrics in development or if requested
-  if (isDevelopment || req.query.detailed === 'true') {
-    const memUsage = process.memoryUsage();
-    healthData.memory = {
-      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024) + 'MB',
-      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024) + 'MB',
-      rss: Math.round(memUsage.rss / 1024 / 1024) + 'MB'
-    };
-    healthData.pid = process.pid;
-  }
+  if (isDevelopment || req.query.detailed === "true") {
+		const memUsage = process.memoryUsage();
+		healthData.memory = {
+			heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024) + "MB",
+			heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024) + "MB",
+			rss: Math.round(memUsage.rss / 1024 / 1024) + "MB",
+		};
+		healthData.pid = process.pid;
+	}
 
   res.status(200).json({
     success: true,

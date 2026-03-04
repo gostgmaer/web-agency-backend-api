@@ -2,11 +2,12 @@ import dotenv from "dotenv";
 import app from "./app.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import logger from "./utils/logger.js";
+import { config } from "./config/index.js";
 
 dotenv.config();
 
-const PORT = process.env.PORT || 3000;
-const SHUTDOWN_TIMEOUT = parseInt(process.env.SHUTDOWN_TIMEOUT) || 10000;
+const PORT = config.app.port || 3000;
+const SHUTDOWN_TIMEOUT = parseInt(config.app.shutdownTimeout) || 10000;
 
 let server;
 let isShuttingDown = false;
@@ -93,10 +94,10 @@ const startServer = async () => {
     // Start HTTP server
     server = app.listen(PORT, () => {
       logger.info(`🚀 Server running on port ${PORT}`, {
-        pid: process.pid,
-        environment: process.env.NODE_ENV || 'development',
-        apiDocs: `http://localhost:${PORT}/api-docs`
-      });
+				pid: process.pid,
+				environment: config.app.nodeEnv || "development",
+				apiDocs: `http://localhost:${PORT}/api-docs`,
+			});
     });
 
     // Set server timeout

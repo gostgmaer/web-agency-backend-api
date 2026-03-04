@@ -6,11 +6,12 @@
 import cluster from 'cluster';
 import os from 'os';
 import dotenv from 'dotenv';
+import { config } from "./config/index.js";
 
 dotenv.config();
 
 const numCPUs = os.cpus().length;
-const CLUSTER_MODE = process.env.CLUSTER_MODE === 'true';
+const CLUSTER_MODE = config.app.clusterMode === "true";
 
 if (CLUSTER_MODE && cluster.isPrimary) {
     console.log(`🚀 Primary ${process.pid} is running`);

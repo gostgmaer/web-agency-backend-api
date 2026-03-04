@@ -1,7 +1,8 @@
 import logger from '../utils/logger.js';
 import { AppError, ERROR_MESSAGES } from '../utils/errors.js';
+import { config } from "../config/index.js";
 
-const isDevelopment = process.env.NODE_ENV !== 'production';
+const isDevelopment = config.app.nodeEnv !== "production";
 
 /**
  * Generate a unique request ID for error tracking
