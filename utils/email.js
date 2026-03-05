@@ -59,7 +59,7 @@ export const sendInquiryNotification = async (inquiry) => {
 				email: inquiry.email,
 				phone: inquiry.phone || "Not provided",
 				company: inquiry.company || "Not provided",
-				projectType: inquiry.projectType,
+				projectType: inquiry.subject,
 				budget: inquiry.budget,
 				timeline: inquiry.timeline,
 				description: inquiry.description,
