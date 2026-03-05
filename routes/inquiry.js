@@ -4,11 +4,20 @@ import { validateRequest, sanitizeInput } from "../middleware/validation.js";
 import { createInquiryValidation, inquiryIdValidation } from "../validation/inquiryValidation.js";
 import { getPaginationParams, getPaginationMeta } from "../utils/pagination.js";
 import { sendInquiryNotification, sendInquiryConfirmation } from "../utils/email.js";
-import Inquiry from "../models/Inquiry.js";
+import Inquiry, { SERVICE_OPTIONS, BUDGET_RANGES, TIMELINE_OPTIONS } from "../models/Inquiry.js";
 import logger from "../utils/logger.js";
 import { NotFoundError, BadRequestError } from "../utils/errors.js";
-import { generateProposal, generateProposalPDF } from "../services/generateProposal.js";
+import mongoose from "mongoose";
+import { connectDatabase } from "../config/database.js";
 const router = express.Router();
+
+const ensureDatabaseConnection = async () => {
+	if (mongoose.connection.readyState === 1) {
+		return;
+	}
+
+	await connectDatabase(1, 0);
+};
 
 
 export const formatInquiry = (inquiry) => {
@@ -55,6 +64,8 @@ export const mapInquiryListLabels = (inquiries = []) => {
  */
 router.post("/", createInquiryValidation, validateRequest, sanitizeInput, async (req, res, next) => {
 	try {
+		await ensureDatabaseConnection();
+
 		const inquiryData = {
 			name: req.body.name || req.body.client?.name,
 			email: req.body.email || req.body.client?.email,
@@ -156,13 +167,13 @@ router.get("/", authenticate, async (req, res, next) => {
 		}
 
 		const total = await Inquiry.countDocuments(filter);
-		const inquiries = await Inquiry.find(filter)
-			.populate("assignedTo", "name email")
-			.select("-notes -statusHistory")
-			.sort({ createdAt: -1 })
-			.skip(skip)
-			.limit(limit);
-	inquiries = mapInquiryListLabels(inquiries);
+			let inquiries = await Inquiry.find(filter)
+				.populate("assignedTo", "name email")
+				.select("-notes -statusHistory")
+				.sort({ createdAt: -1 })
+				.skip(skip)
+				.limit(limit);
+			inquiries = mapInquiryListLabels(inquiries);
 		const pagination = getPaginationMeta(total, page, limit);
 
 		res.json({ success: true, message: "Inquiries retrieved successfully", data: { inquiries, pagination } });
