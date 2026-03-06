@@ -3,7 +3,7 @@ import { authenticate } from "../middleware/auth.js";
 import { validateRequest, sanitizeInput } from "../middleware/validation.js";
 import { createInquiryValidation, inquiryIdValidation } from "../validation/inquiryValidation.js";
 import { getPaginationParams, getPaginationMeta } from "../utils/pagination.js";
-import { sendInquiryNotification, sendInquiryConfirmation } from "../utils/email.js";
+import { sendInquiryNotification, sendInquiryConfirmation, sendProjectProposalEmail } from "../utils/email.js";
 import Inquiry, { SERVICE_OPTIONS, BUDGET_RANGES, TIMELINE_OPTIONS } from "../models/Inquiry.js";
 import logger from "../utils/logger.js";
 import { NotFoundError, BadRequestError } from "../utils/errors.js";
@@ -150,7 +150,7 @@ router.post("/", createInquiryValidation, validateRequest, sanitizeInput, async 
 router.get("/", authenticate, async (req, res, next) => {
 	try {
 		const { page, limit, skip } = getPaginationParams(req);
-		const { status, priority, projectType, assignedTo, search } = req.query;
+		const { status, priority, projectType, assignedTo, search, sort = "createdAt", order = "desc" } = req.query;
 
 		let filter = { isDeleted: false };
 		if (status) filter.status = status;
@@ -166,17 +166,92 @@ router.get("/", authenticate, async (req, res, next) => {
 			];
 		}
 
+		const allowedSortFields = ["createdAt", "updatedAt", "name", "email", "status"];
+		const sortField = allowedSortFields.includes(String(sort)) ? String(sort) : "createdAt";
+		const sortOrder = String(order).toLowerCase() === "asc" ? 1 : -1;
+
 		const total = await Inquiry.countDocuments(filter);
 			let inquiries = await Inquiry.find(filter)
 				.populate("assignedTo", "name email")
 				.select("-notes -statusHistory")
-				.sort({ createdAt: -1 })
+				.sort({ [sortField]: sortOrder })
 				.skip(skip)
 				.limit(limit);
 			inquiries = mapInquiryListLabels(inquiries);
 		const pagination = getPaginationMeta(total, page, limit);
 
 		res.json({ success: true, message: "Inquiries retrieved successfully", data: { inquiries, pagination } });
+	} catch (error) {
+		next(error);
+	}
+});
+
+/**
+ * @swagger
+ * /api/inquiry/{id}/proposal:
+ *   post:
+ *     summary: Upload metadata and mark proposal as sent (Admin only)
+ *     tags: [Inquiry]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post("/:id/proposal", authenticate, inquiryIdValidation, validateRequest, async (req, res, next) => {
+	try {
+		const { proposalUrl, proposalHtml, quotedAmount, currency = "USD", note = "" } = req.body;
+
+		if (!proposalUrl) {
+			throw new BadRequestError("proposalUrl is required");
+		}
+
+		const inquiry = await Inquiry.findOne({ _id: req.params.id, isDeleted: false });
+
+		if (!inquiry) {
+			throw new NotFoundError("Inquiry");
+		}
+
+		inquiry.proposalUrl = proposalUrl;
+		inquiry.proposalSent = true;
+		inquiry.proposalSentAt = new Date();
+
+		if (proposalHtml) {
+			inquiry.notes.push({
+				content: `Proposal content saved (${proposalHtml.length} chars)`,
+				createdBy: req.admin._id,
+				createdAt: new Date(),
+				isInternal: true,
+			});
+		}
+
+		if (quotedAmount && Number(quotedAmount) > 0) {
+			inquiry.quotedAmount = Number(quotedAmount);
+			inquiry.quotedCurrency = currency;
+			inquiry.quotedAt = new Date();
+			inquiry.quotedBy = req.admin._id;
+		}
+
+		inquiry.statusHistory.push({
+			status: inquiry.status,
+			changedBy: req.admin._id,
+			changedAt: new Date(),
+			note: note || "Proposal sent",
+		});
+
+		inquiry.status = "quoted";
+		await inquiry.save();
+
+		await sendProjectProposalEmail({ inquiry, proposalUrl });
+
+		logger.info("Proposal sent for inquiry", {
+			inquiryId: inquiry._id,
+			proposalUrl,
+			updatedBy: req.admin.email,
+		});
+
+		res.json({
+			success: true,
+			message: "Proposal sent successfully",
+			data: { inquiry },
+		});
 	} catch (error) {
 		next(error);
 	}

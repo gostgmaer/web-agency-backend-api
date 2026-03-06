@@ -9,6 +9,7 @@ import dotenv from "dotenv";
 import compression from "compression";
 import { randomUUID } from "crypto";
 import mongoose from "mongoose";
+import path from "path";
 
 // Middleware
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
@@ -21,6 +22,7 @@ import blogRoutes from "./routes/blog.js";
 import contactRoutes from "./routes/contact.js";
 import inquiryRoutes from "./routes/inquiry.js";
 import planRoutes from "./routes/plans.js";
+import uploadRoutes from "./routes/upload.js";
 
 import logger from "./utils/logger.js";
 import { config } from "./config/index.js";
@@ -178,6 +180,9 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Serve uploaded files from local storage.
+app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
+
 // Security: Sanitize against NoSQL injection
 app.use(mongoSanitize());
 
@@ -198,6 +203,7 @@ app.use("/api/blogs", blogRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/inquiry", inquiryRoutes);
 app.use("/api/plans", planRoutes);
+app.use("/api/upload", uploadRoutes);
 
 /**
  * Enhanced health check with system metrics

@@ -131,5 +131,35 @@ export const sendInquiryConfirmation = async (inquiry) => {
 	}
 };
 
+export const sendProjectProposalEmail = async ({ inquiry, proposalUrl }) => {
+	try {
+		await sendEmail({
+			to: inquiry.email,
+			templateId: "PROJECT_PROPOSAL_EMAIL",
+			data: {
+				name: inquiry.name,
+				email: inquiry.email,
+				company: inquiry.company || "Not provided",
+				projectType: inquiry.projectType,
+				budget: inquiry.budget,
+				timeline: inquiry.timeline,
+				inquiryId: inquiry._id.toString(),
+				inquiryNumber: inquiry.inquiryNumber,
+				proposalUrl,
+				quotedAmount: inquiry.quotedAmount,
+				quotedCurrency: inquiry.quotedCurrency,
+				proposalSentAt: inquiry.proposalSentAt,
+			},
+		});
+	} catch (error) {
+		logger.error("Failed to send project proposal email:", {
+			message: error.message,
+			inquiryId: inquiry?._id,
+			to: inquiry?.email,
+		});
+		throw error;
+	}
+};
+
 // Alias for newsletter routes
 export const sendNewsletterWelcome = sendWelcomeEmail;

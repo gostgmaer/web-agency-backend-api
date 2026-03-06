@@ -1,5 +1,6 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from "crypto";
 import { authenticate } from '../middleware/auth.js';
 import { validateRequest } from '../middleware/validation.js';
 import { loginValidation } from '../validation/authValidation.js';
@@ -7,6 +8,7 @@ import Admin from '../models/Admin.js';
 import logger from '../utils/logger.js';
 import { AuthenticationError, BadRequestError } from '../utils/errors.js';
 import { config } from "../config/index.js";
+import { sendEmail } from "../utils/email.js";
 
 const router = express.Router();
 
@@ -152,6 +154,114 @@ router.post('/refresh', async (req, res, next) => {
     } else {
       next(error);
     }
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Request password reset link
+ *     tags: [Auth]
+ */
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      throw new BadRequestError('Email is required');
+    }
+
+    const admin = await Admin.findOne({ email }).select('+passwordResetToken +passwordResetExpires');
+
+    if (admin && admin.isActive) {
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      const hashedResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+      admin.passwordResetToken = hashedResetToken;
+      admin.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
+      await admin.save({ validateBeforeSave: false });
+
+      const resetUrl = `${config.app.frontendUrl}/reset-password/?token=${resetToken}`;
+
+      try {
+        await sendEmail({
+          to: admin.email,
+          templateId: 'PASSWORD_RESET',
+          data: {
+            name: admin.name,
+            resetUrl,
+            expiresInMinutes: 15,
+          },
+        });
+      } catch (mailError) {
+        logger.error('Password reset email failed', {
+          email: admin.email,
+          error: mailError.message,
+        });
+      }
+    }
+
+    // Always return success to prevent account enumeration.
+    res.json({
+      success: true,
+      message: 'If the account exists, a reset link has been sent to the email address.',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Reset password using reset token
+ *     tags: [Auth]
+ */
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { token, newPassword, confirmPassword } = req.body;
+
+    if (!token || !newPassword || !confirmPassword) {
+      throw new BadRequestError('Token, new password and confirm password are required');
+    }
+
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestError('Password confirmation does not match');
+    }
+
+    if (newPassword.length < 6) {
+      throw new BadRequestError('New password must be at least 6 characters');
+    }
+
+    const hashedResetToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    const admin = await Admin.findOne({
+      passwordResetToken: hashedResetToken,
+      passwordResetExpires: { $gt: new Date() },
+      isActive: true,
+    }).select('+passwordResetToken +passwordResetExpires +password');
+
+    if (!admin) {
+      throw new AuthenticationError('Invalid or expired reset token');
+    }
+
+    admin.password = newPassword;
+    admin.passwordResetToken = undefined;
+    admin.passwordResetExpires = undefined;
+    admin.loginAttempts = 0;
+    admin.lockUntil = undefined;
+    await admin.save();
+
+    logger.info('Admin password reset successful', { email: admin.email });
+
+    res.json({
+      success: true,
+      message: 'Password reset successful. Please login with your new password.',
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
