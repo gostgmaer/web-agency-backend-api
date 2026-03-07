@@ -27,139 +27,92 @@ export const sendEmail = async (options) => {
 	}
 };
 
-export const sendContactNotification = async (contact) => {
+/**
+ * Sends the double opt-in confirmation email when a user first subscribes.
+ * Template: NEWSLETTER_SUBSCRIBE_CONFIRMATION
+ */
+export const sendNewsletterSubscriptionConfirmation = async (subscriber) => {
 	try {
+		const confirmationUrl = `${config.app.frontendUrl || "http://localhost:3000"}/newsletter/confirm?token=${subscriber.confirmationToken}`;
 		await sendEmail({
-			to: config.admin.email || "admin@easydev.in",
-			templateId: "CONTACT_NOTIFICATION",
+			to: subscriber.email,
+			templateId: "NEWSLETTER_SUBSCRIBE_CONFIRMATION",
 			data: {
-				name: contact.name,
-				email: contact.email,
-				phone: contact.phone || "Not provided",
-				company: contact.company || "Not provided",
-				subject: contact.subject,
-				message: contact.message,
-				submittedAt: new Date(contact.createdAt).toLocaleString(),
-				contactId: contact._id.toString(),
+				name: subscriber.name || subscriber.email,
+				email: subscriber.email,
+				confirmationUrl,
+				companyName: "Web Agency",
 			},
 		});
 	} catch (error) {
-		logger.error("Failed to send contact notification email:", error);
+		logger.error("Failed to send newsletter subscription confirmation email:", error);
 		throw error;
 	}
 };
 
-export const sendInquiryNotification = async (inquiry) => {
+/**
+ * Sends a welcome email after the subscriber confirms their subscription.
+ * Template: NEWSLETTER_WELCOME
+ */
+export const sendNewsletterWelcomeConfirmed = async (subscriber) => {
 	try {
+		const unsubscribeUrl = `${config.app.frontendUrl || "http://localhost:3000"}/newsletter/unsubscribe?email=${encodeURIComponent(subscriber.email)}`;
 		await sendEmail({
-			to: config.admin.email || "admin@easydev.in",
-			templateId: "INQUIRY_NOTIFICATION",
-			data: {
-				name: inquiry.name,
-				email: inquiry.email,
-				phone: inquiry.phone || "Not provided",
-				company: inquiry.company || "Not provided",
-				projectType: inquiry.subject,
-				budget: inquiry.budget,
-				timeline: inquiry.timeline,
-				description: inquiry.description,
-				requirements: inquiry.requirements || [],
-				submittedAt: new Date(inquiry.createdAt).toLocaleString(),
-				inquiryId: inquiry._id.toString(),
-				inquiryNumber: inquiry.inquiryNumber,
-			},
-		});
-	} catch (error) {
-		logger.error("Failed to send inquiry notification email:", error);
-		throw error;
-	}
-};
-
-export const sendWelcomeEmail = async (email) => {
-	try {
-		await sendEmail({
-			to: email,
+			to: subscriber.email,
 			templateId: "NEWSLETTER_WELCOME",
 			data: {
-				email: email,
+				name: subscriber.name || subscriber.email,
+				email: subscriber.email,
 				companyName: "Web Agency",
-				unsubscribeUrl: `${config.app.frontendUrl || "http://localhost:3000"}/unsubscribe`,
+				unsubscribeUrl,
 			},
 		});
 	} catch (error) {
-		logger.error("Failed to send welcome email:", error);
+		logger.error("Failed to send newsletter welcome email:", error);
 		throw error;
 	}
 };
 
-export const sendContactConfirmation = async (contact) => {
+/**
+ * Sends a welcome-back email when a user re-subscribes.
+ * Template: NEWSLETTER_RESUBSCRIBE
+ */
+export const sendNewsletterResubscribeWelcome = async (subscriber) => {
+	try {
+		const unsubscribeUrl = `${config.app.frontendUrl || "http://localhost:3000"}/newsletter/unsubscribe?email=${encodeURIComponent(subscriber.email)}`;
+		await sendEmail({
+			to: subscriber.email,
+			templateId: "NEWSLETTER_RESUBSCRIBE",
+			data: {
+				name: subscriber.name || subscriber.email,
+				email: subscriber.email,
+				companyName: "Web Agency",
+				unsubscribeUrl,
+			},
+		});
+	} catch (error) {
+		logger.error("Failed to send newsletter re-subscribe welcome email:", error);
+		throw error;
+	}
+};
+
+/**
+ * Sends a farewell email when a user unsubscribes.
+ * Template: NEWSLETTER_FAREWELL
+ */
+export const sendNewsletterFarewell = async (subscriber) => {
 	try {
 		await sendEmail({
-			to: contact.email,
-			templateId: "CONTACT_CONFIRMATION",
+			to: subscriber.email,
+			templateId: "NEWSLETTER_FAREWELL",
 			data: {
-				name: contact.name,
-				subject: contact.subject,
+				name: subscriber.name || subscriber.email,
+				email: subscriber.email,
 				companyName: "Web Agency",
-				contactId: contact._id.toString(),
 			},
 		});
 	} catch (error) {
-		logger.error("Failed to send contact confirmation email:", error);
+		logger.error("Failed to send newsletter farewell email:", error);
 		throw error;
 	}
 };
-
-export const sendInquiryConfirmation = async (inquiry) => {
-	try {
-		await sendEmail({
-			to: inquiry.email,
-			templateId: "INQUIRY_CONFIRMATION",
-			data: {
-				name: inquiry.name,
-				projectType: inquiry.projectType,
-				budget: inquiry.budget,
-				timeline: inquiry.timeline,
-				companyName: "Web Agency",
-				inquiryId: inquiry._id.toString(),
-				inquiryNumber: inquiry.inquiryNumber,
-			},
-		});
-	} catch (error) {
-		logger.error("Failed to send inquiry confirmation email:", error);
-		throw error;
-	}
-};
-
-export const sendProjectProposalEmail = async ({ inquiry, proposalUrl }) => {
-	try {
-		await sendEmail({
-			to: inquiry.email,
-			templateId: "PROJECT_PROPOSAL_EMAIL",
-			data: {
-				name: inquiry.name,
-				email: inquiry.email,
-				company: inquiry.company || "Not provided",
-				projectType: inquiry.projectType,
-				budget: inquiry.budget,
-				timeline: inquiry.timeline,
-				inquiryId: inquiry._id.toString(),
-				inquiryNumber: inquiry.inquiryNumber,
-				proposalUrl,
-				quotedAmount: inquiry.quotedAmount,
-				quotedCurrency: inquiry.quotedCurrency,
-				proposalSentAt: inquiry.proposalSentAt,
-			},
-		});
-	} catch (error) {
-		logger.error("Failed to send project proposal email:", {
-			message: error.message,
-			inquiryId: inquiry?._id,
-			to: inquiry?.email,
-		});
-		throw error;
-	}
-};
-
-// Alias for newsletter routes
-export const sendNewsletterWelcome = sendWelcomeEmail;

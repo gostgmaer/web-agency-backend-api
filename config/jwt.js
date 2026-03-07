@@ -1,16 +1,5 @@
-import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key';
-const JWT_EXPIRE = process.env.JWT_EXPIRE || '7d';
-
-export const generateToken = (payload) => {
-  return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: JWT_EXPIRE
-  });
-};
-
-export const verifyToken = (token) => {
-  return jwt.verify(token, JWT_SECRET);
-};
-
-export { JWT_SECRET, JWT_EXPIRE };
+// Shared secret — must match JWT_ACCESS_SECRET in the user-auth-service.
+// Tokens are issued exclusively by the user-auth-service; this service only verifies them.
+export const JWT_SECRET = process.env.JWT_ACCESS_SECRET;
+export const JWT_ISSUER = process.env.JWT_ISSUER || 'user-auth-service';
+export const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'dashboard-app';

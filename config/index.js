@@ -23,9 +23,10 @@ export const config = {
 	database: { mongoUri: process.env.MONGODB_URI },
 
 	jwt: {
-		secret: process.env.JWT_SECRET,
-		expire: process.env.JWT_EXPIRE || "7d",
-		refreshSecret: process.env.JWT_REFRESH_SECRET,
+		// Must match JWT_ACCESS_SECRET in the user-auth-service
+		accessSecret: process.env.JWT_ACCESS_SECRET,
+		issuer: process.env.JWT_ISSUER || 'user-auth-service',
+		audience: process.env.JWT_AUDIENCE || 'dashboard-app',
 	},
 
 	email: {
@@ -41,7 +42,12 @@ export const config = {
 		adminEmail: process.env.ADMIN_EMAIL,
 	},
 
-	admin: { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD },
+	admin: { email: process.env.ADMIN_EMAIL },
+
+	// External microservice base URLs
+	lead: { serviceUrl: process.env.LEAD_SERVICE_URL },
+	fileUpload: { serviceUrl: process.env.FILE_UPLOAD_SERVICE_URL },
+	auth: { serviceUrl: process.env.AUTH_SERVICE_URL },
 
 	logging: {
 		enabled: process.env.ENABLE_LOGGING !== "false",

@@ -3,8 +3,6 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import mongoSanitize from "express-mongo-sanitize";
-import swaggerJsdoc from "swagger-jsdoc";
-import swaggerUi from "swagger-ui-express";
 import dotenv from "dotenv";
 import compression from "compression";
 import { randomUUID } from "crypto";
@@ -13,16 +11,13 @@ import path from "path";
 
 // Middleware
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
-// import { requestLogger } from "./middleware/requestLogger.js";
 
-// Routes
-import authRoutes from "./routes/auth.js";
+// Routes — owned by this service
 import newsletterRoutes from "./routes/newsletter.js";
-import blogRoutes from "./routes/blog.js";
-import contactRoutes from "./routes/contact.js";
-import inquiryRoutes from "./routes/inquiry.js";
-import planRoutes from "./routes/plans.js";
 import uploadRoutes from "./routes/upload.js";
+
+// Proxy routes — forwarded to microservices
+import proxyRoutes from "./routes/proxy.js";
 
 import logger from "./utils/logger.js";
 import { config } from "./config/index.js";
@@ -97,45 +92,6 @@ const limiter = rateLimit({
   }
 });
 
-/**
- * Stricter rate limit for auth endpoints
- */
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 20, // 20 attempts per 15 minutes
-  message: {
-    success: false,
-    error: {
-      code: 'AUTH_RATE_LIMIT',
-      message: 'Too many login attempts. Please try again in 15 minutes.'
-    }
-  }
-});
-
-// Swagger configuration
-const swaggerOptions = {
-  definition: {
-    openapi: "3.0.0",
-    info: {
-      title: "Web Development Agency API",
-      version: "1.0.0",
-      description: "REST API for Web Development Agency website"
-    },
-    components: {
-      securitySchemes: {
-        bearerAuth: {
-          type: "http",
-          scheme: "bearer",
-          bearerFormat: "JWT"
-        }
-      }
-    }
-  },
-  apis: ["./routes/*.js"]
-};
-
-const specs = swaggerJsdoc(swaggerOptions);
-
 // Security middleware
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
@@ -186,28 +142,23 @@ app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 // Security: Sanitize against NoSQL injection
 app.use(mongoSanitize());
 
-// app.use(requestLogger);
+// Serve Postman collection for direct import
+app.get("/api/postman-collection", (_req, res) => {
+  res.sendFile(
+    path.resolve(process.cwd(), "postman", "Web-Agency-API.postman_collection.json")
+  );
+});
 
-// API Docs (only in development/staging)
-if (isDevelopment || config.app.enableSwagger === "true") {
-	app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
-}
-
-// Apply stricter rate limit to auth routes
-app.use("/api/auth/login", authLimiter);
-
-// Routes
-app.use("/api/auth", authRoutes);
+// Routes — owned by this service
 app.use("/api/newsletter", newsletterRoutes);
-app.use("/api/blogs", blogRoutes);
-app.use("/api/contact", contactRoutes);
-app.use("/api/inquiry", inquiryRoutes);
-app.use("/api/plans", planRoutes);
 app.use("/api/upload", uploadRoutes);
 
-/**
- * Enhanced health check with system metrics
- */
+// Proxy routes — transparently forwarded to microservices
+// NOTE: proxy routes must come AFTER body-parsing middleware but the
+// http-proxy-middleware handles its own streaming; body already consumed
+// for owned routes above, proxy routes sit on a separate path namespace.
+app.use("/api", proxyRoutes);
+
 app.get("/api/health", (req, res) => {
   const healthData = {
 		status: "healthy",
@@ -235,9 +186,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-/**
- * Readiness check for load balancers
- */
 app.get("/api/ready", (req, res) => {
   // Check if database is connected (readyState: 1 = connected)
   const isDbReady = mongoose.connection.readyState === 1;

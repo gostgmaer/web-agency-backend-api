@@ -1,12 +1,16 @@
 import jwt from 'jsonwebtoken';
-import Admin from '../models/Admin.js';
-import { JWT_SECRET } from '../config/jwt.js';
+import { JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
 import logger from '../utils/logger.js';
 
-export const authenticate = async (req, res, next) => {
+/**
+ * Verifies the Bearer access token issued by the user-auth-service.
+ * Validates issuer + audience claims. No local DB lookup — stateless verification only.
+ * Attaches req.user = { id, email, role, tenantId, sessionId } from decoded payload.
+ */
+export const authenticate = (req, res, next) => {
   try {
     let token;
-    
+
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
       token = req.headers.authorization.split(' ')[1];
     }
@@ -18,35 +22,29 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const admin = await Admin.findById(decoded.id).select('-password');
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    });
 
-    if (!admin) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token is not valid. Admin not found'
-      });
-    }
+    // Map user-auth-service JWT claims to a consistent shape
+    req.user = {
+      id: decoded.sub,           // MongoDB ObjectId string
+      email: decoded.email,
+      role: decoded.role,
+      tenantId: decoded.tenantId,
+      sessionId: decoded.sessionId,
+    };
 
-    if (!admin.isActive) {
-      return res.status(401).json({
-        success: false,
-        message: 'Account has been deactivated'
-      });
-    }
-
-    req.admin = admin;
     next();
   } catch (error) {
-    logger.error('Authentication error:', error);
-    
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({
         success: false,
         message: 'Invalid token'
       });
     }
-    
+
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({
         success: false,
@@ -54,6 +52,7 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
+    logger.error('Authentication error:', error);
     return res.status(500).json({
       success: false,
       message: 'Server error during authentication'
@@ -63,14 +62,14 @@ export const authenticate = async (req, res, next) => {
 
 export const authorize = (...roles) => {
   return (req, res, next) => {
-    if (!req.admin) {
+    if (!req.user) {
       return res.status(401).json({
         success: false,
         message: 'Access denied. Authentication required'
       });
     }
 
-    if (!roles.includes(req.admin.role)) {
+    if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: `Access denied. Required role: ${roles.join(' or ')}`

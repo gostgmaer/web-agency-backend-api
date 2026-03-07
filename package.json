@@ -7,37 +7,25 @@
     "start": "node server.js",
     "start:cluster": "node cluster.js",
     "dev": "nodemon server.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "test:load": "npx autocannon -c 100 -d 30 http://localhost:3000/api/health",
-    "test:load:blogs": "npx autocannon -c 100 -d 30 http://localhost:3000/api/blogs"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "axios": "^1.13.6",
-    "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
-    "docxtemplater": "^3.68.3",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^7.1.5",
     "express-validator": "^7.0.1",
-    "fs": "0.0.1-security",
     "helmet": "^7.1.0",
-    "html-pdf-node": "^1.0.8",
+    "http-proxy-middleware": "^3.0.5",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.3",
-    "nodemailer": "^6.9.7",
-    "nodemon": "^3.1.14",
-    "path": "^0.12.7",
-    "pizzip": "^3.2.0",
-    "puppeteer": "^24.37.5",
-    "puppeteer-core": "^24.37.5",
     "winston": "^3.11.0",
     "xss": "^1.0.14"
   },
   "devDependencies": {
-    "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.0"
+    "nodemon": "^3.1.14"
   }
 }

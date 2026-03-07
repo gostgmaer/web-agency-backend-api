@@ -3,20 +3,18 @@ import { authenticate } from '../middleware/auth.js';
 import { validateRequest, sanitizeInput } from '../middleware/validation.js';
 import { subscribeValidation, unsubscribeValidation } from '../validation/newsletterValidation.js';
 import { getPaginationParams, getPaginationMeta } from '../utils/pagination.js';
-import { sendNewsletterWelcome } from '../utils/email.js';
+import {
+  sendNewsletterSubscriptionConfirmation,
+  sendNewsletterWelcomeConfirmed,
+  sendNewsletterResubscribeWelcome,
+  sendNewsletterFarewell,
+} from '../utils/email.js';
 import Newsletter from '../models/Newsletter.js';
 import logger from '../utils/logger.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
 
 const router = express.Router();
 
-/**
- * @swagger
- * /api/newsletter/subscribe:
- *   post:
- *     summary: Subscribe to newsletter
- *     tags: [Newsletter]
- */
 router.post('/subscribe', subscribeValidation, validateRequest, sanitizeInput, async (req, res, next) => {
   try {
     const { email, name, preferences } = req.body;
@@ -34,6 +32,14 @@ router.post('/subscribe', subscribeValidation, validateRequest, sanitizeInput, a
 
       // Resubscribe
       await existing.resubscribe();
+
+      // Send re-subscribe welcome email (non-blocking)
+      sendNewsletterResubscribeWelcome(existing).catch(emailError => {
+        logger.error('Failed to send newsletter re-subscribe email:', {
+          error: emailError.message,
+          email
+        });
+      });
 
       logger.info('Newsletter resubscribed', { email });
 
@@ -56,9 +62,9 @@ router.post('/subscribe', subscribeValidation, validateRequest, sanitizeInput, a
     // Generate confirmation token
     await subscriber.generateConfirmationToken();
 
-    // Send welcome/confirmation email (non-blocking)
-    sendNewsletterWelcome(subscriber).catch(emailError => {
-      logger.error('Failed to send newsletter welcome email:', {
+    // Send double opt-in confirmation email (non-blocking)
+    sendNewsletterSubscriptionConfirmation(subscriber).catch(emailError => {
+      logger.error('Failed to send newsletter subscription confirmation email:', {
         error: emailError.message,
         email
       });
@@ -82,13 +88,6 @@ router.post('/subscribe', subscribeValidation, validateRequest, sanitizeInput, a
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/confirm/{token}:
- *   get:
- *     summary: Confirm newsletter subscription
- *     tags: [Newsletter]
- */
 router.get('/confirm/:token', async (req, res, next) => {
   try {
     const subscriber = await Newsletter.findOne({
@@ -108,6 +107,14 @@ router.get('/confirm/:token', async (req, res, next) => {
 
     await subscriber.confirmSubscription();
 
+    // Send welcome email now that subscription is confirmed (non-blocking)
+    sendNewsletterWelcomeConfirmed(subscriber).catch(emailError => {
+      logger.error('Failed to send newsletter welcome email after confirmation:', {
+        error: emailError.message,
+        email: subscriber.email
+      });
+    });
+
     logger.info('Newsletter subscription confirmed', {
       email: subscriber.email
     });
@@ -121,13 +128,6 @@ router.get('/confirm/:token', async (req, res, next) => {
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/unsubscribe:
- *   post:
- *     summary: Unsubscribe from newsletter
- *     tags: [Newsletter]
- */
 router.post('/unsubscribe', unsubscribeValidation, validateRequest, async (req, res, next) => {
   try {
     const { email, reason, feedback } = req.body;
@@ -147,6 +147,14 @@ router.post('/unsubscribe', unsubscribeValidation, validateRequest, async (req, 
 
     await subscriber.unsubscribe(reason, feedback);
 
+    // Send farewell email (non-blocking)
+    sendNewsletterFarewell(subscriber).catch(emailError => {
+      logger.error('Failed to send newsletter farewell email:', {
+        error: emailError.message,
+        email
+      });
+    });
+
     logger.info('Newsletter unsubscribed', {
       email,
       reason
@@ -161,15 +169,6 @@ router.post('/unsubscribe', unsubscribeValidation, validateRequest, async (req, 
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/subscribers:
- *   get:
- *     summary: Get all subscribers (Admin only)
- *     tags: [Newsletter]
- *     security:
- *       - bearerAuth: []
- */
 router.get('/subscribers', authenticate, async (req, res, next) => {
   try {
     const { page, limit, skip } = getPaginationParams(req);
@@ -205,15 +204,6 @@ router.get('/subscribers', authenticate, async (req, res, next) => {
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/stats:
- *   get:
- *     summary: Get newsletter statistics (Admin only)
- *     tags: [Newsletter]
- *     security:
- *       - bearerAuth: []
- */
 router.get('/stats', authenticate, async (req, res, next) => {
   try {
     const stats = await Newsletter.getStats();
@@ -248,15 +238,6 @@ router.get('/stats', authenticate, async (req, res, next) => {
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/subscriber/{id}:
- *   get:
- *     summary: Get subscriber by ID (Admin only)
- *     tags: [Newsletter]
- *     security:
- *       - bearerAuth: []
- */
 router.get('/subscriber/:id', authenticate, async (req, res, next) => {
   try {
     const subscriber = await Newsletter.findById(req.params.id)
@@ -276,15 +257,6 @@ router.get('/subscriber/:id', authenticate, async (req, res, next) => {
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/subscriber/{id}/tags:
- *   patch:
- *     summary: Update subscriber tags (Admin only)
- *     tags: [Newsletter]
- *     security:
- *       - bearerAuth: []
- */
 router.patch('/subscriber/:id/tags', authenticate, async (req, res, next) => {
   try {
     const { tags } = req.body;
@@ -306,7 +278,7 @@ router.patch('/subscriber/:id/tags', authenticate, async (req, res, next) => {
     logger.info('Subscriber tags updated', {
       subscriberId: subscriber._id,
       tags,
-      updatedBy: req.admin.email
+      updatedBy: req.user?.email
     });
 
     res.json({
@@ -319,13 +291,6 @@ router.patch('/subscriber/:id/tags', authenticate, async (req, res, next) => {
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/track/open:
- *   post:
- *     summary: Track email open (for email tracking pixel)
- *     tags: [Newsletter]
- */
 router.post('/track/open', async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -345,13 +310,6 @@ router.post('/track/open', async (req, res, next) => {
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/track/click:
- *   post:
- *     summary: Track email click
- *     tags: [Newsletter]
- */
 router.post('/track/click', async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -371,15 +329,6 @@ router.post('/track/click', async (req, res, next) => {
   }
 });
 
-/**
- * @swagger
- * /api/newsletter/subscriber/{id}:
- *   delete:
- *     summary: Delete subscriber (Admin only)
- *     tags: [Newsletter]
- *     security:
- *       - bearerAuth: []
- */
 router.delete('/subscriber/:id', authenticate, async (req, res, next) => {
   try {
     const subscriber = await Newsletter.findByIdAndDelete(req.params.id);
@@ -390,7 +339,7 @@ router.delete('/subscriber/:id', authenticate, async (req, res, next) => {
 
     logger.info('Subscriber deleted', {
       email: subscriber.email,
-      deletedBy: req.admin.email
+      deletedBy: req.user?.email
     });
 
     res.json({

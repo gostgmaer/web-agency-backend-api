@@ -1,8 +1,8 @@
 {
   "info": {
-    "name": "Web Development Agency API",
-    "description": "Complete API collection for Web Development Agency backend service",
-    "version": "1.0.0",
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Web Agency Backend API",
+    "description": "# Web Agency Backend API\n\n## Base URL\n```\nhttp://localhost:3500\n```\nChange `baseUrl` in the collection variables to match your environment.\n\n---\n\n## Architecture Overview\n\nThis service is an **API Gateway**. It owns a small set of routes and transparently proxies everything else to downstream microservices. All requests from your frontend go to **this single base URL**.\n\n### Routes owned by this service\n| Prefix | Description |\n|---|---|\n| `POST /api/upload/proposal` | Save a base64-encoded proposal HTML file locally |\n| `/api/newsletter/*` | Full newsletter subscription lifecycle (stored in MongoDB) |\n| `GET /api/health` | Health check |\n| `GET /api/ready` | Readiness probe (DB connected?) |\n| `GET /api/postman-collection` | Download this Postman collection |\n\n### Proxied routes (pass-through — this gateway adds no logic)\n| Prefix | Forwards to | Microservice |\n|---|---|---|\n| `/api/auth/*` | `AUTH_SERVICE_URL/api/auth/*` | user-auth-service (port 4002) |\n| `/api/admin/*` | `AUTH_SERVICE_URL/api/admin/*` | user-auth-service (port 4002) |\n| `/api/leads/*` | `LEAD_SERVICE_URL/api/leads/*` | lead-microservice |\n| `/api/files/*` | `FILE_UPLOAD_SERVICE_URL/api/files/*` | file-upload-service (port 4001) |\n\n---\n\n## Contact Forms & Project Inquiries\n\nBoth submit to the **same endpoint** on the lead-microservice:\n```\nPOST {{baseUrl}}/api/leads/submit\n```\nUse the `category` field to distinguish them:\n- General contact message → `\"category\": \"General Inquiry\"`\n- Project estimate request → `\"category\": \"Sales\"` + include `projectType`, `budget`, `timeline`\n\nThe lead-microservice handles storage, CRM pipeline, and all email notifications for leads.\n\n---\n\n## Authentication Flow\n1. Call `POST /api/auth/login` — the test script saves `accessToken` → `{{authToken}}`\n2. All protected requests automatically send `Authorization: Bearer {{authToken}}`\n3. When the token expires, call `POST /api/auth/token/refresh` with `{{refreshToken}}`",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -18,33 +18,980 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:3000",
-      "type": "string"
+      "value": "http://localhost:3500",
+      "description": "Base URL of the web-agency-backend-api gateway. Change for staging/production."
     },
     {
       "key": "authToken",
       "value": "",
-      "type": "string"
+      "description": "JWT access token — auto-set by the Login request test script."
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "description": "JWT refresh token — auto-set by the Login request test script."
+    },
+    {
+      "key": "leadId",
+      "value": "",
+      "description": "Lead ID — auto-set after submitting a lead."
+    },
+    {
+      "key": "fileId",
+      "value": "",
+      "description": "File ID — auto-set after uploading a file."
+    },
+    {
+      "key": "subscriberEmail",
+      "value": "test@example.com",
+      "description": "Email used for newsletter tests."
     }
   ],
   "item": [
     {
-      "name": "Authentication",
+      "name": "System",
+      "description": "Health and utility endpoints owned by this gateway service.",
       "item": [
         {
-          "name": "Admin Login",
+          "name": "Health Check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Returns service health: uptime, memory (in dev mode), environment."
+          }
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ready",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ready"]
+            },
+            "description": "Returns 200 only when MongoDB is connected. Use this for load-balancer health probes."
+          }
+        },
+        {
+          "name": "Download Postman Collection",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/postman-collection",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "postman-collection"]
+            },
+            "description": "Returns this Postman collection JSON for direct import."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth — Public",
+      "description": "**Proxied → user-auth-service**\n\nAll requests under `/api/auth/*` pass through this gateway transparently to the user-auth-service. No auth required for these routes.",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Doe\",\n  \"email\": \"jane.doe@example.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "register"]
+            },
+            "description": "Register a new user. Returns 201; triggers a verification email."
+          }
+        },
+        {
+          "name": "Login",
           "event": [
             {
               "listen": "test",
               "script": {
                 "exec": [
                   "if (pm.response.code === 200) {",
-                  "    const response = pm.response.json();",
-                  "    pm.collectionVariables.set('authToken', response.data.token);",
-                  "    pm.test('Login successful', function () {",
-                  "        pm.expect(response.success).to.be.true;",
-                  "        pm.expect(response.data.token).to.exist;",
-                  "    });",
+                  "  const r = pm.response.json();",
+                  "  if (r.data?.accessToken)  pm.collectionVariables.set('authToken', r.data.accessToken);",
+                  "  if (r.data?.refreshToken) pm.collectionVariables.set('refreshToken', r.data.refreshToken);",
+                  "  pm.test('Login successful', () => pm.expect(r.success).to.be.true);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Login. The test script automatically saves `accessToken` → `{{authToken}}` and `refreshToken` → `{{refreshToken}}`."
+          }
+        },
+        {
+          "name": "Login — Complete MFA",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\",\n  \"otpCode\": \"123456\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login/mfa",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login", "mfa"]
+            },
+            "description": "Complete the MFA step when login returns a pending MFA challenge."
+          }
+        },
+        {
+          "name": "Verify Email",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\",\n  \"otp\": \"123456\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/email/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "email", "verify"]
+            }
+          }
+        },
+        {
+          "name": "Resend Email Verification",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/email/resend",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "email", "resend"]
+            }
+          }
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/password/forgot",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "password", "forgot"]
+            }
+          }
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"reset-token-from-email\",\n  \"newPassword\": \"NewPassword123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/password/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "password", "reset"]
+            }
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\",\n  \"otp\": \"123456\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/otp/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "otp", "verify"]
+            }
+          }
+        },
+        {
+          "name": "Resend OTP",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/otp/resend",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "otp", "resend"]
+            }
+          }
+        },
+        {
+          "name": "Request Account Unlock",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jane.doe@example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/account/unlock/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "account", "unlock", "request"]
+            }
+          }
+        },
+        {
+          "name": "Confirm Account Unlock",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"unlock-token-from-email\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/account/unlock/confirm",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "account", "unlock", "confirm"]
+            }
+          }
+        },
+        {
+          "name": "Social Login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"google\",\n  \"idToken\": \"google-id-token\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/social/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "social", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth — Protected",
+      "description": "**Proxied → user-auth-service** (requires Bearer token)\n\nThese routes require `Authorization: Bearer {{authToken}}`.",
+      "item": [
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "me"]
+            },
+            "description": "Returns the profile of the currently logged-in user."
+          }
+        },
+        {
+          "name": "Update My Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Smith\",\n  \"phone\": \"+1234567890\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"Password123!\",\n  \"newPassword\": \"NewPassword456!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/password/change",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "password", "change"]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "logout"]
+            },
+            "description": "Revokes the current session and invalidates the refresh token."
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/token/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "token", "refresh"]
+            },
+            "description": "Exchange a refresh token for a new access token."
+          }
+        },
+        {
+          "name": "Verify Token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/token/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "token", "verify"]
+            }
+          }
+        },
+        {
+          "name": "List Linked Social Accounts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/social/accounts",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "social", "accounts"]
+            }
+          }
+        },
+        {
+          "name": "Link Social Account",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"github\",\n  \"idToken\": \"github-id-token\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/social/link",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "social", "link"]
+            }
+          }
+        },
+        {
+          "name": "Unlink Social Account",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/social/unlink/:provider",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "social", "unlink", ":provider"],
+              "variable": [{ "key": "provider", "value": "google", "description": "google | github | facebook" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "**Proxied → user-auth-service** (requires Bearer token with `admin` or `super_admin` role)",
+      "item": [
+        {
+          "name": "Force Unlock User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/users/:userId/unlock",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "users", ":userId", "unlock"],
+              "variable": [{ "key": "userId", "value": "user-id-here" }]
+            }
+          }
+        },
+        {
+          "name": "List Active Sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "sessions"]
+            }
+          }
+        },
+        {
+          "name": "Revoke Session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/sessions/:sessionId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "sessions", ":sessionId"],
+              "variable": [{ "key": "sessionId", "value": "session-id-here" }]
+            }
+          }
+        },
+        {
+          "name": "View Auth Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/logs",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "logs"]
+            }
+          }
+        },
+        {
+          "name": "Auth Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/analytics",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "analytics"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Leads — Submit (Public)",
+      "description": "**Proxied → lead-microservice** (no auth required)\n\nThis is the **single endpoint for contact forms AND project inquiries**.\n\n- Contact form → set `\"category\": \"General Inquiry\"`\n- Project inquiry → set `\"category\": \"Sales\"` and include `projectType`, `budget`, `timeline`\n\nThe `x-tenant-id` header is required by the lead-microservice.",
+      "item": [
+        {
+          "name": "Submit — Contact Form",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const r = pm.response.json();",
+                  "  const id = r.data?.lead?._id || r.data?._id;",
+                  "  if (id) pm.collectionVariables.set('leadId', id);",
+                  "  pm.test('Lead submitted', () => pm.expect(r.success).to.be.true);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-tenant-id", "value": "your-tenant-id", "description": "Required by lead-microservice" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"John\",\n  \"lastName\": \"Smith\",\n  \"email\": \"john.smith@example.com\",\n  \"phone\": \"+1234567890\",\n  \"subject\": \"Website enquiry\",\n  \"message\": \"Hi, I would like to know more about your services.\",\n  \"gdprConsent\": true,\n  \"category\": \"General Inquiry\",\n  \"preferredContactMethod\": \"email\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/submit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "submit"]
+            },
+            "description": "Replaces the old `POST /api/contact` endpoint. Submit a general contact message."
+          }
+        },
+        {
+          "name": "Submit — Project Inquiry",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const r = pm.response.json();",
+                  "  const id = r.data?.lead?._id || r.data?._id;",
+                  "  if (id) pm.collectionVariables.set('leadId', id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-tenant-id", "value": "your-tenant-id" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Sarah\",\n  \"lastName\": \"Johnson\",\n  \"email\": \"sarah@acme.com\",\n  \"phone\": \"+1987654321\",\n  \"subject\": \"E-commerce website project\",\n  \"message\": \"We need a full e-commerce platform built from scratch.\",\n  \"gdprConsent\": true,\n  \"projectType\": \"ecommerce\",\n  \"budget\": \"25k-50k\",\n  \"timeline\": \"3-6months\",\n  \"category\": \"Sales\",\n  \"website\": \"https://acme.com\",\n  \"preferredContactMethod\": \"email\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/submit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "submit"]
+            },
+            "description": "Replaces the old `POST /api/inquiry` endpoint. Submit a project inquiry with budget, timeline, and project type. Same route as the contact form — use `category: Sales` to distinguish."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Leads — CRM (Admin)",
+      "description": "**Proxied → lead-microservice** (requires Bearer token)\n\nFull CRM pipeline management — all forwarded to the lead-microservice.",
+      "item": [
+        {
+          "name": "List Leads",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "status", "value": "new", "disabled": true },
+                { "key": "assignedTo", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Lead Pipeline Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "stats"]
+            }
+          }
+        },
+        {
+          "name": "Search Leads",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/search?q=john",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "search"],
+              "query": [{ "key": "q", "value": "john" }]
+            }
+          }
+        },
+        {
+          "name": "Export Leads (CSV)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/export",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "export"]
+            }
+          }
+        },
+        {
+          "name": "Leads Due for Follow-up",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/follow-up",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "follow-up"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Update Leads",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ids\": [\"lead-id-1\", \"lead-id-2\"],\n  \"status\": \"contacted\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/bulk-update",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "bulk-update"]
+            }
+          }
+        },
+        {
+          "name": "Get Lead",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Lead",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+1234567890\",\n  \"company\": \"ACME Corp\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Lead",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}"]
+            }
+          }
+        },
+        {
+          "name": "Add Note",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Called client, scheduled demo for Friday.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/notes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "notes"]
+            }
+          }
+        },
+        {
+          "name": "Log Contact Attempt",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"phone\",\n  \"outcome\": \"reached\",\n  \"note\": \"Discussed project scope.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/contact",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "contact"]
+            }
+          }
+        },
+        {
+          "name": "Change Status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"qualified\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Mark Won",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dealValue\": 15000,\n  \"currency\": \"USD\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/won",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "won"]
+            }
+          }
+        },
+        {
+          "name": "Mark Lost",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Budget constraints\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/lost",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "lost"]
+            }
+          }
+        },
+        {
+          "name": "Put on Hold",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Waiting for client budget approval\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/hold",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "hold"]
+            }
+          }
+        },
+        {
+          "name": "Send Proposal",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"proposalUrl\": \"http://localhost:3500/uploads/proposals/proposal-001.html\",\n  \"quotedAmount\": 12000,\n  \"quotedCurrency\": \"USD\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/proposal",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "proposal"]
+            },
+            "description": "Upload the proposal HTML first via `POST /api/upload/proposal`, then pass the returned URL here."
+          }
+        },
+        {
+          "name": "Resend Proposal",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/proposal/resend",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "proposal", "resend"]
+            }
+          }
+        },
+        {
+          "name": "Accept Proposal",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/proposal/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "proposal", "accept"]
+            }
+          }
+        },
+        {
+          "name": "Send Contract",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contractUrl\": \"https://storage.example.com/contracts/contract-001.pdf\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/contract",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "contract"]
+            }
+          }
+        },
+        {
+          "name": "Mark Contract Signed",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/contract/signed",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "contract", "signed"]
+            }
+          }
+        },
+        {
+          "name": "Register File Attachment",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fileUrl\": \"https://storage.example.com/files/requirements.pdf\",\n  \"fileName\": \"requirements.pdf\",\n  \"fileType\": \"application/pdf\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/attachments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "attachments"]
+            },
+            "description": "After uploading via `POST /api/files/upload`, register the returned file URL here."
+          }
+        },
+        {
+          "name": "Remove Attachment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/leads/{{leadId}}/attachments/:fileId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "leads", "{{leadId}}", "attachments", ":fileId"],
+              "variable": [{ "key": "fileId", "value": "{{fileId}}" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Files",
+      "description": "**Proxied → file-upload-service** (requires Bearer token)\n\nAll file storage is handled by the file-upload-service. Pass the following headers from your JWT claims:\n- `X-Tenant-Id` — `tenantId` from token\n- `X-User-Id` — `sub` from token\n- `X-User-Role` — `role` from token",
+      "item": [
+        {
+          "name": "Upload File(s)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const r = pm.response.json();",
+                  "  const id = r.data?.files?.[0]?._id || r.data?.file?._id;",
+                  "  if (id) pm.collectionVariables.set('fileId', id);",
                   "}"
                 ]
               }
@@ -53,575 +1000,293 @@
           "request": {
             "method": "POST",
             "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
+              { "key": "X-Tenant-Id", "value": "your-tenant-id", "description": "From JWT tenantId claim" },
+              { "key": "X-User-Id", "value": "your-user-id", "description": "From JWT sub claim" },
+              { "key": "X-User-Role", "value": "admin", "description": "From JWT role claim" }
             ],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"admin@webagency.com\",\n  \"password\": \"admin123\"\n}"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select up to 10 files"
+                }
+              ]
             },
             "url": {
-              "raw": "{{baseUrl}}/api/auth/login",
+              "raw": "{{baseUrl}}/api/files/upload",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "login"]
-            },
-            "description": "Login with admin credentials to get JWT token"
+              "path": ["api", "files", "upload"]
+            }
           }
         },
         {
-          "name": "Get Admin Profile",
+          "name": "List Files",
           "request": {
             "method": "GET",
             "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
+              { "key": "X-Tenant-Id", "value": "your-tenant-id" },
+              { "key": "X-User-Id", "value": "your-user-id" },
+              { "key": "X-User-Role", "value": "admin" }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/auth/profile",
+              "raw": "{{baseUrl}}/api/files?page=1&limit=20",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "profile"]
-            },
-            "description": "Get current admin profile information"
+              "path": ["api", "files"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
           }
         },
         {
-          "name": "Admin Logout",
+          "name": "Get File Metadata",
           "request": {
-            "method": "POST",
+            "method": "GET",
             "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
+              { "key": "X-Tenant-Id", "value": "your-tenant-id" },
+              { "key": "X-User-Id", "value": "your-user-id" },
+              { "key": "X-User-Role", "value": "admin" }
             ],
             "url": {
-              "raw": "{{baseUrl}}/api/auth/logout",
+              "raw": "{{baseUrl}}/api/files/{{fileId}}",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "auth", "logout"]
+              "path": ["api", "files", "{{fileId}}"]
+            }
+          }
+        },
+        {
+          "name": "Download File",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Tenant-Id", "value": "your-tenant-id" },
+              { "key": "X-User-Id", "value": "your-user-id" },
+              { "key": "X-User-Role", "value": "admin" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/files/{{fileId}}/download",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "{{fileId}}", "download"]
+            }
+          }
+        },
+        {
+          "name": "Rename File",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Id", "value": "your-tenant-id" },
+              { "key": "X-User-Id", "value": "your-user-id" },
+              { "key": "X-User-Role", "value": "admin" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"new-filename.pdf\"\n}",
+              "options": { "raw": { "language": "json" } }
             },
-            "description": "Logout admin user"
+            "url": {
+              "raw": "{{baseUrl}}/api/files/{{fileId}}/rename",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "{{fileId}}", "rename"]
+            }
+          }
+        },
+        {
+          "name": "Delete File (Soft)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "X-Tenant-Id", "value": "your-tenant-id" },
+              { "key": "X-User-Id", "value": "your-user-id" },
+              { "key": "X-User-Role", "value": "admin" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/files/{{fileId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "{{fileId}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete File (Permanent)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "X-Tenant-Id", "value": "your-tenant-id" },
+              { "key": "X-User-Id", "value": "your-user-id" },
+              { "key": "X-User-Role", "value": "admin" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/files/{{fileId}}/permanent",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "{{fileId}}", "permanent"]
+            }
+          }
+        },
+        {
+          "name": "File Transaction History",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Tenant-Id", "value": "your-tenant-id" },
+              { "key": "X-User-Id", "value": "your-user-id" },
+              { "key": "X-User-Role", "value": "admin" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/files/{{fileId}}/transactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "files", "{{fileId}}", "transactions"]
+            }
           }
         }
       ]
     },
     {
       "name": "Newsletter",
+      "description": "**Owned by this service** — backed by MongoDB\n\nFull double opt-in newsletter management. Public routes: subscribe, confirm, unsubscribe. Admin routes (marked) require Bearer token.",
       "item": [
         {
-          "name": "Subscribe to Newsletter",
+          "name": "Subscribe",
           "request": {
+            "auth": { "type": "noauth" },
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+              "raw": "{\n  \"email\": \"{{subscriberEmail}}\",\n  \"name\": \"Test User\",\n  \"preferences\": [\"updates\", \"promotions\"]\n}",
+              "options": { "raw": { "language": "json" } }
             },
             "url": {
               "raw": "{{baseUrl}}/api/newsletter/subscribe",
               "host": ["{{baseUrl}}"],
               "path": ["api", "newsletter", "subscribe"]
             },
-            "description": "Subscribe email to newsletter (sends welcome email)"
+            "description": "Subscribe to the newsletter. Triggers a double opt-in confirmation email. Already-subscribed emails return 200; inactive emails are reactivated."
           }
         },
         {
-          "name": "Unsubscribe from Newsletter",
+          "name": "Confirm Subscription",
           "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/newsletter/confirm/:token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "newsletter", "confirm", ":token"],
+              "variable": [{ "key": "token", "value": "token-from-confirmation-email" }]
+            },
+            "description": "Confirm the subscription using the token from the opt-in email. Triggers a welcome email on first confirmation."
+          }
+        },
+        {
+          "name": "Unsubscribe",
+          "request": {
+            "auth": { "type": "noauth" },
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+              "raw": "{\n  \"email\": \"{{subscriberEmail}}\",\n  \"reason\": \"no_longer_interested\",\n  \"feedback\": \"Too many emails\"\n}",
+              "options": { "raw": { "language": "json" } }
             },
             "url": {
               "raw": "{{baseUrl}}/api/newsletter/unsubscribe",
               "host": ["{{baseUrl}}"],
               "path": ["api", "newsletter", "unsubscribe"]
-            },
-            "description": "Unsubscribe email from newsletter"
+            }
           }
         },
         {
-          "name": "Get Newsletter Subscribers (Admin)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/newsletter?page=1&limit=10&status=active",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "newsletter"],
-              "query": [
-                {
-                  "key": "page",
-                  "value": "1"
-                },
-                {
-                  "key": "limit",
-                  "value": "10"
-                },
-                {
-                  "key": "status",
-                  "value": "active"
-                }
-              ]
-            },
-            "description": "Get paginated list of newsletter subscribers (Admin only)"
-          }
-        },
-        {
-          "name": "Delete Newsletter Subscriber (Admin)",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/newsletter/{{subscriberId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "newsletter", "{{subscriberId}}"]
-            },
-            "description": "Delete newsletter subscriber by ID (Admin only)"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Blog",
-      "item": [
-        {
-          "name": "Get Published Blogs",
+          "name": "List Subscribers (Admin)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/blogs?page=1&limit=10&category=tech&search=web",
+              "raw": "{{baseUrl}}/api/newsletter/subscribers?page=1&limit=20&isActive=true&isConfirmed=true",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "blogs"],
+              "path": ["api", "newsletter", "subscribers"],
               "query": [
-                {
-                  "key": "page",
-                  "value": "1"
-                },
-                {
-                  "key": "limit",
-                  "value": "10"
-                },
-                {
-                  "key": "category",
-                  "value": "tech"
-                },
-                {
-                  "key": "search",
-                  "value": "web"
-                }
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "isActive", "value": "true" },
+                { "key": "isConfirmed", "value": "true" },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "tag", "value": "", "disabled": true }
               ]
-            },
-            "description": "Get paginated list of published blogs with optional filtering"
+            }
           }
         },
         {
-          "name": "Get Blog by Slug",
+          "name": "Newsletter Stats (Admin)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/blogs/{{blogSlug}}",
+              "raw": "{{baseUrl}}/api/newsletter/stats",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "blogs", "{{blogSlug}}"]
-            },
-            "description": "Get single blog post by slug (increments view count)"
+              "path": ["api", "newsletter", "stats"]
+            }
           }
         },
         {
-          "name": "Create Blog (Admin)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"Getting Started with Modern Web Development\",\n  \"slug\": \"getting-started-modern-web-development\",\n  \"content\": \"<p>This is the full content of the blog post...</p>\",\n  \"excerpt\": \"Learn the fundamentals of modern web development with this comprehensive guide.\",\n  \"featuredImage\": \"https://example.com/image.jpg\",\n  \"categories\": [\"web-development\", \"tutorial\"],\n  \"tags\": [\"javascript\", \"react\", \"nodejs\"],\n  \"isPublished\": true\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/blogs",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "blogs"]
-            },
-            "description": "Create new blog post (Admin only)"
-          }
-        },
-        {
-          "name": "Update Blog (Admin)",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"Updated Blog Title\",\n  \"content\": \"<p>Updated content...</p>\",\n  \"isPublished\": false\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/blogs/{{blogId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "blogs", "{{blogId}}"]
-            },
-            "description": "Update existing blog post (Admin only)"
-          }
-        },
-        {
-          "name": "Delete Blog (Admin)",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/blogs/{{blogId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "blogs", "{{blogId}}"]
-            },
-            "description": "Soft delete blog post (Admin only)"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Contact",
-      "item": [
-        {
-          "name": "Submit Contact Form",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"phone\": \"+1234567890\",\n  \"company\": \"Acme Corp\",\n  \"subject\": \"Website Development Inquiry\",\n  \"message\": \"I'm interested in developing a new website for my business. Could you please provide more information about your services?\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/contact",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "contact"]
-            },
-            "description": "Submit contact form (sends notification and confirmation emails)"
-          }
-        },
-        {
-          "name": "Get All Contacts (Admin)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/contact?page=1&limit=10&status=new&priority=high",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "contact"],
-              "query": [
-                {
-                  "key": "page",
-                  "value": "1"
-                },
-                {
-                  "key": "limit",
-                  "value": "10"
-                },
-                {
-                  "key": "status",
-                  "value": "new"
-                },
-                {
-                  "key": "priority",
-                  "value": "high"
-                }
-              ]
-            },
-            "description": "Get paginated list of contact submissions (Admin only)"
-          }
-        },
-        {
-          "name": "Get Contact by ID (Admin)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/contact/{{contactId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "contact", "{{contactId}}"]
-            },
-            "description": "Get single contact submission by ID (Admin only, marks as read)"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Inquiry",
-      "item": [
-        {
-          "name": "Submit Project Inquiry",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Jane Smith\",\n  \"email\": \"jane@example.com\",\n  \"phone\": \"+1234567890\",\n  \"company\": \"Tech Startup Inc\",\n  \"projectType\": \"webapp\",\n  \"budget\": \"25k-50k\",\n  \"timeline\": \"3-6months\",\n  \"description\": \"We need a comprehensive web application for our SaaS platform with user authentication, dashboard, and payment integration.\",\n  \"requirements\": [\"User Authentication\", \"Payment Gateway\", \"Admin Dashboard\", \"API Integration\"]\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/inquiry",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "inquiry"]
-            },
-            "description": "Submit project inquiry (sends notification and confirmation emails)"
-          }
-        },
-        {
-          "name": "Get All Inquiries (Admin)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/inquiry?page=1&limit=10&status=new&projectType=webapp&priority=high",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "inquiry"],
-              "query": [
-                {
-                  "key": "page",
-                  "value": "1"
-                },
-                {
-                  "key": "limit",
-                  "value": "10"
-                },
-                {
-                  "key": "status",
-                  "value": "new"
-                },
-                {
-                  "key": "projectType",
-                  "value": "webapp"
-                },
-                {
-                  "key": "priority",
-                  "value": "high"
-                }
-              ]
-            },
-            "description": "Get paginated list of project inquiries (Admin only)"
-          }
-        },
-        {
-          "name": "Get Inquiry by ID (Admin)",
-          "request": {
-            "method": "GET",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/inquiry/{{inquiryId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "inquiry", "{{inquiryId}}"]
-            },
-            "description": "Get single inquiry by ID (Admin only, marks as reviewing)"
-          }
-        },
-        {
-          "name": "Delete Inquiry (Admin)",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/inquiry/{{inquiryId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "inquiry", "{{inquiryId}}"]
-            },
-            "description": "Delete inquiry by ID (Admin only)"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Plans",
-      "item": [
-        {
-          "name": "Get All Plans",
+          "name": "Get Subscriber (Admin)",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/plans?category=website&billingCycle=monthly",
+              "raw": "{{baseUrl}}/api/newsletter/subscriber/:id",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "plans"],
-              "query": [
-                {
-                  "key": "category",
-                  "value": "website"
-                },
-                {
-                  "key": "billingCycle",
-                  "value": "monthly"
-                }
-              ]
-            },
-            "description": "Get all active plans with optional filtering"
+              "path": ["api", "newsletter", "subscriber", ":id"],
+              "variable": [{ "key": "id", "value": "subscriber-mongo-id" }]
+            }
           }
         },
         {
-          "name": "Create Plan (Admin)",
+          "name": "Update Subscriber Tags (Admin)",
           "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Professional Website\",\n  \"slug\": \"professional-website\",\n  \"description\": \"Complete professional website with custom design and CMS\",\n  \"price\": 2999,\n  \"currency\": \"USD\",\n  \"billingCycle\": \"one-time\",\n  \"category\": \"website\",\n  \"features\": [\n    {\n      \"name\": \"Custom Design\",\n      \"included\": true,\n      \"description\": \"Fully custom website design\"\n    },\n    {\n      \"name\": \"Content Management\",\n      \"included\": true,\n      \"description\": \"Easy-to-use CMS\"\n    },\n    {\n      \"name\": \"SEO Optimization\",\n      \"included\": true,\n      \"description\": \"Search engine optimization\"\n    }\n  ],\n  \"isPopular\": true,\n  \"isActive\": true,\n  \"order\": 1\n}"
+              "raw": "{\n  \"tags\": [\"vip\", \"enterprise\"]\n}",
+              "options": { "raw": { "language": "json" } }
             },
             "url": {
-              "raw": "{{baseUrl}}/api/plans",
+              "raw": "{{baseUrl}}/api/newsletter/subscriber/:id/tags",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "plans"]
-            },
-            "description": "Create new plan (Admin only)"
-          }
-        },
-        {
-          "name": "Update Plan (Admin)",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"price\": 3499,\n  \"isPopular\": false\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/api/plans/{{planId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "plans", "{{planId}}"]
-            },
-            "description": "Update existing plan (Admin only)"
-          }
-        },
-        {
-          "name": "Delete Plan (Admin)",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Authorization",
-                "value": "Bearer {{authToken}}"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/api/plans/{{planId}}",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "plans", "{{planId}}"]
-            },
-            "description": "Delete plan by ID (Admin only)"
+              "path": ["api", "newsletter", "subscriber", ":id", "tags"],
+              "variable": [{ "key": "id", "value": "subscriber-mongo-id" }]
+            }
           }
         }
       ]
     },
     {
-      "name": "Health Check",
+      "name": "Upload",
+      "description": "**Owned by this service** (requires Bearer token)\n\nSaves a base64-encoded HTML file to local disk and returns a public URL. Used to generate proposal pages.\n\n**Workflow:**\n1. `POST /api/upload/proposal` → get back a `url`\n2. Pass that `url` to `POST /api/leads/:id/proposal` to send the proposal to the client",
       "item": [
         {
-          "name": "Health Check",
+          "name": "Upload Proposal HTML",
           "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/api/health",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "health"]
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fileName\": \"proposal-acme-2026.html\",\n  \"mimeType\": \"text/html\",\n  \"contentBase64\": \"PCFET0NUWVBFIGh0bWw+PGh0bWw+PGJvZHk+PGgxPlByb3Bvc2FsPC9oMT48L2JvZHk+PC9odG1sPg==\"\n}",
+              "options": { "raw": { "language": "json" } }
             },
-            "description": "Check API health status"
+            "url": {
+              "raw": "{{baseUrl}}/api/upload/proposal",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "upload", "proposal"]
+            },
+            "description": "Saves a base64-encoded HTML string to `uploads/proposals/` and returns a public URL.\n\nThe example `contentBase64` decodes to `<!DOCTYPE html><html><body><h1>Proposal</h1></body></html>`."
           }
         }
       ]
