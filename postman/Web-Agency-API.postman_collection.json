@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "Web Agency Backend API",
-    "description": "# Web Agency Backend API\n\n## Base URL\n```\nhttp://localhost:3500\n```\nChange `baseUrl` in the collection variables to match your environment.\n\n---\n\n## Architecture Overview\n\nThis service is an **API Gateway**. It owns a small set of routes and transparently proxies everything else to downstream microservices. All requests from your frontend go to **this single base URL**.\n\n### Routes owned by this service\n| Prefix | Description |\n|---|---|\n| `POST /api/upload/proposal` | Save a base64-encoded proposal HTML file locally |\n| `/api/newsletter/*` | Full newsletter subscription lifecycle (stored in MongoDB) |\n| `GET /api/health` | Health check |\n| `GET /api/ready` | Readiness probe (DB connected?) |\n| `GET /api/postman-collection` | Download this Postman collection |\n\n### Proxied routes (pass-through — this gateway adds no logic)\n| Prefix | Forwards to | Microservice |\n|---|---|---|\n| `/api/auth/*` | `AUTH_SERVICE_URL/api/auth/*` | user-auth-service (port 4002) |\n| `/api/admin/*` | `AUTH_SERVICE_URL/api/admin/*` | user-auth-service (port 4002) |\n| `/api/leads/*` | `LEAD_SERVICE_URL/api/leads/*` | lead-microservice |\n| `/api/files/*` | `FILE_UPLOAD_SERVICE_URL/api/files/*` | file-upload-service (port 4001) |\n\n---\n\n## Contact Forms & Project Inquiries\n\nBoth submit to the **same endpoint** on the lead-microservice:\n```\nPOST {{baseUrl}}/api/leads/submit\n```\nUse the `category` field to distinguish them:\n- General contact message → `\"category\": \"General Inquiry\"`\n- Project estimate request → `\"category\": \"Sales\"` + include `projectType`, `budget`, `timeline`\n\nThe lead-microservice handles storage, CRM pipeline, and all email notifications for leads.\n\n---\n\n## Authentication Flow\n1. Call `POST /api/auth/login` — the test script saves `accessToken` → `{{authToken}}`\n2. All protected requests automatically send `Authorization: Bearer {{authToken}}`\n3. When the token expires, call `POST /api/auth/token/refresh` with `{{refreshToken}}`",
+    "description": "# Web Agency Backend API\n\n## Base URL\n```\nhttp://localhost:3500\n```\nChange `baseUrl` in the collection variables to match your environment.\n\n---\n\n## Architecture Overview\n\nThis service is an **API Gateway**. It owns a small set of routes and transparently proxies everything else to downstream microservices. All requests from your frontend go to **this single base URL**.\n\n### Routes owned by this service\n| Prefix | Description |\n|---|---|\n| `/api/calculator/*` | Project cost estimation, maintenance & TCO breakdown (no auth required) |\n| `POST /api/upload/proposal` | Save a base64-encoded proposal HTML file locally |\n| `/api/newsletter/*` | Full newsletter subscription lifecycle (stored in MongoDB) |\n| `GET /api/health` | Health check |\n| `GET /api/ready` | Readiness probe (DB connected?) |\n| `GET /api/postman-collection` | Download this Postman collection |\n\n### Proxied routes (pass-through — this gateway adds no logic)\n| Prefix | Forwards to | Microservice |\n|---|---|---|\n| `/api/auth/*` | `AUTH_SERVICE_URL/api/auth/*` | user-auth-service (port 4002) |\n| `/api/admin/*` | `AUTH_SERVICE_URL/api/admin/*` | user-auth-service (port 4002) |\n| `/api/leads/*` | `LEAD_SERVICE_URL/api/leads/*` | lead-microservice |\n| `/api/files/*` | `FILE_UPLOAD_SERVICE_URL/api/files/*` | file-upload-service (port 4001) |\n\n---\n\n## Contact Forms & Project Inquiries\n\nBoth submit to the **same endpoint** on the lead-microservice:\n```\nPOST {{baseUrl}}/api/leads/submit\n```\nUse the `category` field to distinguish them:\n- General contact message → `\"category\": \"General Inquiry\"`\n- Project estimate request → `\"category\": \"Sales\"` + include `projectType`, `budget`, `timeline`\n\nThe lead-microservice handles storage, CRM pipeline, and all email notifications for leads.\n\n---\n\n## Authentication Flow\n1. Call `POST /api/auth/login` — the test script saves `accessToken` → `{{authToken}}`\n2. All protected requests automatically send `Authorization: Bearer {{authToken}}`\n3. When the token expires, call `POST /api/auth/token/refresh` with `{{refreshToken}}`",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -1263,6 +1263,234 @@
               "path": ["api", "newsletter", "subscriber", ":id", "tags"],
               "variable": [{ "key": "id", "value": "subscriber-mongo-id" }]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Calculator",
+      "description": "**Owned by this service** — no authentication required\n\nReturns a full project cost breakdown, maintenance plans (1 / 3 / 5 year), server-tier scenarios and total cost of ownership (TCO). Useful for generating client-facing proposals before a lead is submitted.\n\n**Endpoints:**\n- `POST /api/calculator/estimate` — compute the full breakdown for a given amount / project type\n- `GET /api/calculator/profiles` — list all available project types, complexity levels and their default cost ratios",
+      "item": [
+        {
+          "name": "Estimate — by amount (standard website)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 50000,\n  \"currency\": \"INR\",\n  \"projectType\": \"website\",\n  \"complexityLevel\": \"standard\",\n  \"projectName\": \"Business Website\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "Returns a complete cost breakdown for a ₹50,000 standard website: per-phase amounts (design, frontend, backend, testing, PM, deployment), 1/3/5-year maintenance plans with monthly schedule, all 4 server tiers with multi-year ranges, TCO table, comparison grid and 3 ready-to-present proposal scenarios."
+          }
+        },
+        {
+          "name": "Estimate — webapp / advanced",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 250000,\n  \"currency\": \"INR\",\n  \"projectType\": \"webapp\",\n  \"complexityLevel\": \"advanced\",\n  \"projectName\": \"SaaS Dashboard\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "Advanced web app estimate — backend-heavy profile (42% backend, 25% frontend). Higher maintenance rate (22% / yr) and longer timeline (5–8 months)."
+          }
+        },
+        {
+          "name": "Estimate — e-commerce / standard",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"INR\",\n  \"projectType\": \"ecommerce\",\n  \"complexityLevel\": \"standard\",\n  \"projectName\": \"Online Store\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "E-commerce estimate — heavier backend (33%) for cart, checkout and payment gateway logic. Maintenance rate 22% / yr."
+          }
+        },
+        {
+          "name": "Estimate — custom breakdown",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"INR\",\n  \"projectType\": \"website\",\n  \"complexityLevel\": \"standard\",\n  \"projectName\": \"Custom-priced Project\",\n  \"customBreakdown\": {\n    \"design\": 12000,\n    \"frontend\": 28000,\n    \"backend\": 8000,\n    \"testing\": 4000,\n    \"projectManagement\": 4500,\n    \"deployment\": 2500\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "Override the automatic percentage split with your own absolute amounts per category. The total is derived from the sum of all values; maintenance and server costs are then calculated on that total."
+          }
+        },
+        {
+          "name": "Get All Profiles",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/profiles",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "profiles"]
+            },
+            "description": "Returns all available project types (`website`, `webapp`, `ecommerce`, `mobile`, `other`), all complexity levels with their default percentage splits, maintenance rates and estimated timelines. Use this to populate frontend dropdowns dynamically."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Calculator",
+      "description": "**Owned by this service** — no authentication required\n\nReturns a full project cost breakdown, maintenance plans (1 / 3 / 5 year), server-tier scenarios and total cost of ownership (TCO). Useful for generating client-facing estimates before a lead is submitted.\n\n**Endpoints:**\n- `POST /api/calculator/estimate` — compute the full breakdown for a given amount / project type\n- `GET /api/calculator/profiles` — list all available project types, complexity levels and default cost ratios",
+      "item": [
+        {
+          "name": "Estimate — by amount (standard website)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Estimate returned', () => {",
+                  "  const r = pm.response.json();",
+                  "  pm.expect(r.success).to.be.true;",
+                  "  pm.expect(r.data).to.have.property('projectBreakdown');",
+                  "  pm.expect(r.data).to.have.property('maintenancePlans');",
+                  "  pm.expect(r.data).to.have.property('serverCosts');",
+                  "  pm.expect(r.data).to.have.property('totalCostOfOwnership');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 50000,\n  \"currency\": \"INR\",\n  \"projectType\": \"website\",\n  \"complexityLevel\": \"standard\",\n  \"projectName\": \"Business Website\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "Returns a complete cost breakdown for a ₹50,000 standard website:\n- Per-phase amounts (design, frontend, backend, testing, PM, deployment)\n- 1 / 3 / 5-year maintenance plans with yearly + monthly breakdown and 5% annual escalation\n- All 4 server tiers (Shared, VPS, Cloud, Dedicated) with multi-year cost ranges\n- TCO table across every tier × every time horizon\n- Comparison grid for quick client sharing\n- 3 ready-to-present proposal scenarios (Budget / Recommended / Enterprise)"
+          }
+        },
+        {
+          "name": "Estimate — webapp / advanced",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 250000,\n  \"currency\": \"INR\",\n  \"projectType\": \"webapp\",\n  \"complexityLevel\": \"advanced\",\n  \"projectName\": \"SaaS Dashboard\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "Advanced web app — backend-heavy profile (42% backend, 25% frontend). Higher maintenance rate (22% / yr) and a 5–8 month estimated timeline."
+          }
+        },
+        {
+          "name": "Estimate — e-commerce / standard",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 150000,\n  \"currency\": \"INR\",\n  \"projectType\": \"ecommerce\",\n  \"complexityLevel\": \"standard\",\n  \"projectName\": \"Online Store\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "E-commerce with cart, checkout and payment gateway. Heavier backend split (33%). Maintenance rate 22% / yr."
+          }
+        },
+        {
+          "name": "Estimate — mobile app / standard",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 180000,\n  \"currency\": \"INR\",\n  \"projectType\": \"mobile\",\n  \"complexityLevel\": \"standard\",\n  \"projectName\": \"Cross-platform Mobile App\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "Cross-platform mobile app (React Native / Flutter). Design-heavy profile: 22% design, 38% frontend. Maintenance 20% / yr. Timeline 3–6 months."
+          }
+        },
+        {
+          "name": "Estimate — custom breakdown",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"INR\",\n  \"projectType\": \"website\",\n  \"complexityLevel\": \"standard\",\n  \"projectName\": \"Custom-priced Project\",\n  \"customBreakdown\": {\n    \"design\": 12000,\n    \"frontend\": 28000,\n    \"backend\": 8000,\n    \"testing\": 4000,\n    \"projectManagement\": 4500,\n    \"deployment\": 2500\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/estimate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "estimate"]
+            },
+            "description": "Override the automatic percentage split with your own absolute amounts per category. The total (₹59,000) is derived from the sum of all values; maintenance and server costs are calculated on that total. `projectType` and `complexityLevel` are still used to determine the maintenance rate and timeline."
+          }
+        },
+        {
+          "name": "Get All Profiles",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/calculator/profiles",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "calculator", "profiles"]
+            },
+            "description": "Returns all available project types (`website`, `webapp`, `ecommerce`, `mobile`, `other`), all complexity levels with their default percentage splits, maintenance rates and estimated timelines. Use this to populate frontend dropdowns dynamically without hardcoding."
           }
         }
       ]

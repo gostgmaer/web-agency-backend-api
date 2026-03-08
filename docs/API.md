@@ -19,6 +19,7 @@
    - [Files](#96-files-proxied)
    - [Newsletter](#97-newsletter-owned)
    - [Upload — Proposal HTML](#98-upload--proposal-html-owned)
+   - [Budget Calculator](#99-budget-calculator-owned)
 10. [Error Codes](#10-error-codes)
 11. [End-to-End Workflows](#11-end-to-end-workflows)
 12. [Postman Collection](#12-postman-collection)
@@ -34,6 +35,7 @@
 |---|---|
 | Newsletter subscriptions (double opt-in lifecycle) | MongoDB |
 | Proposal HTML file uploads (local disk) | Local filesystem |
+| **Budget / cost calculator** (stateless, no DB) | In-memory |
 | Health / readiness probes | In-memory |
 
 ### What this service proxies (no logic added)
@@ -67,6 +69,7 @@ Browser / Mobile App
 │         web-agency-backend-api  :3500            │
 │                                                   │
 │  Owned routes:                                    │
+│    /api/calculator/*   ──► in-process (stateless) │
 │    /api/newsletter/*   ──► MongoDB               │
 │    /api/upload/*       ──► local disc             │
 │    /api/health         ──► in-process             │
@@ -762,7 +765,165 @@ Update tags on a subscriber.
 
 ---
 
-## 10. Error Codes
+### 9.9 Budget Calculator (Owned)
+
+> **No authentication required.** Both endpoints are public.  
+> All amounts default to **INR** unless `currency` is specified.
+
+---
+
+#### `POST /api/calculator/estimate`
+
+Generates a full cost breakdown for a project. Accepts a total `amount`, or a `customBreakdown` with per-phase absolute amounts.
+
+**Body fields:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `amount` | number (≥ 1000) | ✓ unless `customBreakdown` | Total project budget |
+| `currency` | `INR` \| `USD` \| `EUR` \| `GBP` | — | Default `INR` |
+| `projectType` | `website` \| `webapp` \| `ecommerce` \| `mobile` \| `other` | — | Default `website` |
+| `complexityLevel` | `basic` \| `standard` \| `advanced` \| `enterprise` | — | Default `standard` |
+| `projectName` | string (≤ 200) | — | Label shown in proposals |
+| `customBreakdown` | object | ✓ unless `amount` | Absolute amounts per phase (overrides % profile) |
+| `customBreakdown.design` | number | — | |
+| `customBreakdown.frontend` | number | — | |
+| `customBreakdown.backend` | number | — | |
+| `customBreakdown.testing` | number | — | |
+| `customBreakdown.projectManagement` | number | — | |
+| `customBreakdown.deployment` | number | — | |
+
+**Example request:**
+```json
+{
+  "amount": 50000,
+  "currency": "INR",
+  "projectType": "website",
+  "complexityLevel": "standard",
+  "projectName": "Business Website"
+}
+```
+
+**Response `200` — shape:**
+```json
+{
+  "success": true,
+  "message": "Cost estimate generated successfully",
+  "data": {
+    "summary": {
+      "projectName": "Business Website",
+      "currency": "INR",
+      "projectType": "website",
+      "complexityLevel": "standard",
+      "complexityDescription": "Business website with CMS, contact forms & basic integrations",
+      "totalProjectCost": 50000,
+      "estimatedTimeline": { "min": 2, "max": 4, "unit": "months" },
+      "annualMaintenanceRate": "18%",
+      "baseMonthlyMaintenance": 750,
+      "recommendedServerTier": "Shared Hosting",
+      "recommendedMonthlyServer": { "min": 200, "max": 600 }
+    },
+
+    "projectBreakdown": {
+      "total": 50000,
+      "items": [
+        { "category": "UI/UX Design",           "key": "design",            "percentage": 20, "amount": 10000, "includes": ["..."] },
+        { "category": "Frontend Development",   "key": "frontend",          "percentage": 35, "amount": 17500, "includes": ["..."] },
+        { "category": "Backend Development",    "key": "backend",           "percentage": 20, "amount": 10000, "includes": ["..."] },
+        { "category": "Testing & QA",           "key": "testing",           "percentage": 10, "amount": 5000,  "includes": ["..."] },
+        { "category": "Project Management",     "key": "projectManagement", "percentage": 10, "amount": 5000,  "includes": ["..."] },
+        { "category": "Deployment & DevOps",    "key": "deployment",        "percentage": 5,  "amount": 2500,  "includes": ["..."] }
+      ]
+    },
+
+    "maintenancePlans": {
+      "annualRate": "18%",
+      "baseAnnualCost": 9000,
+      "baseMonthlyAverage": 750,
+      "note": "Maintenance starts at 18% of project cost per year. A 5% annual growth factor...",
+      "breakdown": [
+        { "category": "Bug Fixes & Code Updates",        "percentage": 35, "amount": 3150 },
+        { "category": "Security Patches & Audits",       "percentage": 20, "amount": 1800 },
+        { "category": "Performance Monitoring & Tuning", "percentage": 15, "amount": 1350 },
+        { "category": "Content & Feature Updates",       "percentage": 15, "amount": 1350 },
+        { "category": "Technical Support",               "percentage": 10, "amount": 900  },
+        { "category": "Backups & Disaster Recovery",     "percentage": 5,  "amount": 450  }
+      ],
+      "plans": {
+        "1year": { "years": 1, "totalCost": 9000,  "averageMonthly": 750, "yearlySchedule": [{ "year": 1, "annual": 9000, "monthly": 750, "breakdown": [] }] },
+        "3year": { "years": 3, "totalCost": 28275, "averageMonthly": 785, "yearlySchedule": [{ "year": 1, "annual": 9000 }, { "year": 2, "annual": 9450 }, { "year": 3, "annual": 9923 }] },
+        "5year": { "years": 5, "totalCost": 51576, "averageMonthly": 860, "yearlySchedule": ["year 1..5 with +5% escalation"] }
+      }
+    },
+
+    "serverCosts": {
+      "note": "All amounts in INR. Server costs are estimated ranges.",
+      "tiers": [
+        { "tier": "Shared Hosting",       "monthly": { "min": 200,   "max": 600   }, "yearly": { "min": 2400,   "max": 7200   }, "3year": { "min": 7200,   "max": 21600  }, "5year": { "min": 12000,  "max": 36000  }, "providers": ["Hostinger", "SiteGround"] },
+        { "tier": "VPS",                  "monthly": { "min": 800,   "max": 3000  }, "yearly": { "min": 9600,   "max": 36000  }, "3year": { "min": 28800,  "max": 108000 }, "5year": { "min": 48000,  "max": 180000 }, "providers": ["DigitalOcean", "Linode"] },
+        { "tier": "Cloud (Auto-scaling)", "monthly": { "min": 3000,  "max": 15000 }, "yearly": { "min": 36000,  "max": 180000 }, "3year": { "min": 108000, "max": 540000 }, "5year": { "min": 180000, "max": 900000 }, "providers": ["AWS", "GCP", "Azure"] },
+        { "tier": "Dedicated Server",     "monthly": { "min": 12000, "max": 50000 }, "yearly": { "min": 144000, "max": 600000 }, "3year": { "min": 432000, "max": 1800000 }, "5year": { "min": 720000, "max": 3000000 }, "providers": ["Hetzner", "OVHcloud"] }
+      ]
+    },
+
+    "totalCostOfOwnership": {
+      "note": "TCO = one-time project cost + cumulative maintenance + cumulative server cost (range).",
+      "1year": { "projectCost": 50000, "maintenanceCost": 9000, "scenarios": [{ "tier": "Shared Hosting", "totalMin": 61400, "totalMax": 66200 }, { "...": "..." }] },
+      "3year": { "...": "..." },
+      "5year": { "...": "..." }
+    },
+
+    "comparisonTable": [
+      { "serverTier": "Shared Hosting", "monthlyServer": { "min": 200, "max": 600 }, "1year": { "totalMin": 61400, "totalMax": 66200 }, "3year": { "...": "..." }, "5year": { "...": "..." } }
+    ],
+
+    "proposalScenarios": [
+      { "label": "Budget",      "serverTier": "Shared Hosting",       "monthlyCost": { "maintenance": 750, "server": 200,  "total": 950  }, "3year": { "min": 85475, "max": 96275 } },
+      { "label": "Recommended","serverTier": "Shared Hosting",       "monthlyCost": { "maintenance": 750, "server": 400,  "total": 1150 }, "3year": { "...": "..." } },
+      { "label": "Enterprise", "serverTier": "Cloud (Auto-scaling)", "monthlyCost": { "maintenance": 750, "server": 3000, "total": 3750 }, "3year": { "...": "..." } }
+    ]
+  }
+}
+```
+
+**Error `400`** — when neither `amount` nor `customBreakdown` is provided:
+```json
+{ "success": false, "message": "Provide either \"amount\" (number) or \"customBreakdown\" (object with cost keys)." }
+```
+
+---
+
+#### `GET /api/calculator/profiles`
+
+Returns all available project type / complexity combinations so the frontend can build dynamic dropdowns without hardcoding.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "projectTypes":    ["website", "webapp", "ecommerce", "mobile", "other"],
+    "complexityLevels": ["basic", "standard", "advanced", "enterprise"],
+    "profiles": {
+      "website": {
+        "basic":      { "description": "Simple brochure site", "maintenanceRate": "15%", "timeline": { "min": 1, "max": 2 }, "breakdown": { "design": "25%", "frontend": "40%", "..." : "..." } },
+        "standard":  { "...": "..." },
+        "advanced":  { "...": "..." },
+        "enterprise": { "...": "..." }
+      },
+      "webapp": { "...": "..." },
+      "ecommerce": { "...": "..." },
+      "mobile": { "...": "..." },
+      "other": { "...": "..." }
+    },
+    "serverTiers": [
+      { "tier": "Shared Hosting", "suitableFor": "...", "monthly": { "min": 200, "max": 600 }, "specs": "...", "bestFor": ["..."] }
+    ]
+  }
+}
+```
+
+---
 
 | HTTP Status | Meaning |
 |---|---|
@@ -840,6 +1001,20 @@ All error responses follow:
 1. POST /api/files/upload  (multipart, with X-Tenant-Id, X-User-Id, X-User-Role headers)
    →  { data: { files: [{ _id: "file123", url: "..." }] } }
 2. POST /api/leads/:id/attachments  →  { fileUrl: "...", fileName: "...", fileType: "..." }
+```
+
+### Workflow 7 — Generate a cost estimate before submitting an inquiry
+```
+1. User fills the "Get a Quote" form and requests a price breakdown
+2. POST /api/calculator/estimate
+   Body: { amount: 50000, projectType: "website", complexityLevel: "standard", projectName: "My Site" }
+3. Display the returned projectBreakdown, maintenancePlans and proposalScenarios to the user
+4. User confirms and submits the inquiry:
+   POST /api/leads/submit
+   Headers: x-tenant-id: <tenantId>
+   Body: { firstName, lastName, email, subject, message, gdprConsent: true, category: "Sales",
+           projectType: "website", budget: "25k-50k", timeline: "2-3months" }
+5. Admin reviews the lead in the CRM and can attach the estimate as context
 ```
 
 ---

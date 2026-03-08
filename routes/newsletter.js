@@ -331,7 +331,11 @@ router.post('/track/click', async (req, res, next) => {
 
 router.delete('/subscriber/:id', authenticate, async (req, res, next) => {
   try {
-    const subscriber = await Newsletter.findByIdAndDelete(req.params.id);
+    const subscriber = await Newsletter.findOneAndUpdate(
+      { _id: req.params.id, isDeleted: { $ne: true } },
+      { $set: { isDeleted: true, isActive: false, deletedAt: new Date(), deletedBy: req.user?.id } },
+      { new: true }
+    );
 
     if (!subscriber) {
       throw new NotFoundError('Subscriber');

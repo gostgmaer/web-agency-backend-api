@@ -49,6 +49,11 @@ export const config = {
 	fileUpload: { serviceUrl: process.env.FILE_UPLOAD_SERVICE_URL },
 	auth: { serviceUrl: process.env.AUTH_SERVICE_URL },
 
+	// Tenant ID — used as a fallback x-tenant-id for all proxied requests.
+	// Required for single-tenant deployments; in multi-tenant mode, each
+	// client passes its own x-tenant-id header and this is not used.
+	tenantId: process.env.TENANT_ID || null,
+
 	logging: {
 		enabled: process.env.ENABLE_LOGGING !== "false",
 		level: process.env.LOG_LEVEL || (process.env.NODE_ENV === "production" ? "info" : "debug"),
