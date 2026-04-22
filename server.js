@@ -3,6 +3,7 @@ import app from "./app.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import logger from "./utils/logger.js";
 import { config } from "./config/index.js";
+import { startScheduler } from "./services/leadSchedulerService.js";
 
 dotenv.config();
 
@@ -91,6 +92,9 @@ const startServer = async () => {
   try {
     // Connect to database with retry
     await connectDatabase();
+
+    // Start lead cron jobs
+    startScheduler();
 
     // Start HTTP server
     server = app.listen(PORT, () => {

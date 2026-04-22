@@ -31,12 +31,6 @@ export const config = {
 
 	email: {
 		serviceUrl: process.env.EMAIL_SERVICE_URL,
-		smtp: {
-			host: process.env.SMTP_HOST,
-			port: Number(process.env.SMTP_PORT) || 587,
-			user: process.env.SMTP_USER,
-			pass: process.env.SMTP_PASS,
-		},
 		fromEmail: process.env.FROM_EMAIL,
 		fromName: process.env.FROM_NAME,
 		adminEmail: process.env.ADMIN_EMAIL,
@@ -45,7 +39,6 @@ export const config = {
 	admin: { email: process.env.ADMIN_EMAIL },
 
 	// External microservice base URLs
-	lead: { serviceUrl: process.env.LEAD_SERVICE_URL },
 	fileUpload: { serviceUrl: process.env.FILE_UPLOAD_SERVICE_URL },
 	auth: { serviceUrl: process.env.AUTH_SERVICE_URL },
 
@@ -113,4 +106,22 @@ export const config = {
 	},
 
 	docs: { enableSwagger: process.env.ENABLE_SWAGGER === "true" },
+
+	// ─── Dashboard URL (used in lead email links) ─────────────────────────────
+	dashboard: { url: process.env.DASHBOARD_URL || 'http://localhost:3000' },
+
+	// ─── Lead Email API Key (sent to email microservice) ─────────────────────
+	emailApiKey: process.env.EMAIL_SERVICE_API_KEY || '',
+
+	// ─── Tenancy (multi-tenant lead scoping) ─────────────────────────────────
+	tenant: {
+		enabled: process.env.TENANCY_ENABLED !== 'false',
+		defaultTenantId: process.env.DEFAULT_TENANT_ID || 'easydev',
+	},
+
+	// ─── Redis (optional — lead rate-limiter and scheduler lock) ─────────────
+	redis: {
+		enabled: process.env.REDIS_ENABLED === 'true',
+		url: process.env.REDIS_URL || 'redis://localhost:6379',
+	},
 };

@@ -77,16 +77,6 @@ if (config.auth.serviceUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// Lead Microservice  (/api/leads/**)
-// ---------------------------------------------------------------------------
-
-if (config.lead.serviceUrl) {
-  router.use('/leads', buildProxy(config.lead.serviceUrl, '/api/leads', 'Lead Microservice'));
-} else {
-  router.use('/leads', serviceUnavailable('Lead Microservice'));
-}
-
-// ---------------------------------------------------------------------------
 // File Upload Service  (/api/files/**)
 // ---------------------------------------------------------------------------
 

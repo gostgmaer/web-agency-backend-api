@@ -18,6 +18,7 @@ import uploadRoutes         from "./routes/upload.js";
 import calculatorRoutes     from "./routes/calculator.js";
 import paymentsRoutes       from "./routes/payments.js";
 import communicationRoutes  from "./routes/communication.js";
+import leadRoutes           from "./routes/leads.js";
 
 // Proxy routes — forwarded to microservices
 import proxyRoutes from "./routes/proxy.js";
@@ -203,6 +204,7 @@ app.use("/api/newsletter",    jsonParser, urlencodedParser, newsletterRoutes);
 app.use("/api/upload",        jsonParser, urlencodedParser, uploadRoutes);
 app.use("/api/calculator",    jsonParser,                   calculatorRoutes);
 app.use("/api/communication", jsonParser,                   communicationRoutes);
+app.use("/api/leads",         jsonParser, urlencodedParser, leadRoutes);
 
 // Webhook routes require raw (unparsed) body for HMAC signature verification.
 // We skip jsonParser for /webhooks/* paths; those routes apply express.raw()
