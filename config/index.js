@@ -86,10 +86,10 @@ export const config = {
 			apiKey:        process.env.COMMUNICATION_API_KEY,
 			// EasyDev plan key → Communication platform plan enum
 			planMap: {
-				starter:  'PRO',
-				growth:   'PRO',
-				business: 'ENTERPRISE',
-				free:     'FREE',
+				starter:  'pro',
+				growth:   'pro',
+				business: 'enterprise',
+				free:     'free',
 			},
 		},
 		// Add future products here, e.g.:

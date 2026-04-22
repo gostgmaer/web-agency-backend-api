@@ -45,6 +45,26 @@ function buildProxy(target, basePath, serviceName) {
 }
 
 // ---------------------------------------------------------------------------
+// AI Communication — Customer Auth  (/api/auth/customer/**)
+//
+// MUST be registered BEFORE the generic /auth proxy so that
+// /auth/customer/* hits the AI Communication backend, not user-auth-service.
+//
+// Path rewriting:  /auth/customer/login  →  AI Comm /api/v1/auth/login
+// ---------------------------------------------------------------------------
+
+const communicationApiUrl = config.products?.['easydev-communication']?.apiUrl;
+const communicationProxyTarget = communicationApiUrl
+  ? communicationApiUrl.replace(/\/api\/v1\/?$/, '')
+  : null;
+
+if (communicationProxyTarget) {
+  router.use('/auth/customer', buildProxy(communicationProxyTarget, '/api/v1/auth', 'AI Communication Auth'));
+} else {
+  router.use('/auth/customer', serviceUnavailable('AI Communication Auth'));
+}
+
+// ---------------------------------------------------------------------------
 // Auth Service  (/api/auth/**, /api/admin/**)
 // ---------------------------------------------------------------------------
 
@@ -74,6 +94,25 @@ if (config.fileUpload.serviceUrl) {
   router.use('/files', buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload Service'));
 } else {
   router.use('/files', serviceUnavailable('File Upload Service'));
+}
+
+// ---------------------------------------------------------------------------
+// AI Communication — Customer Data  (/api/customer/**)
+//
+// All post-login customer dashboard calls are proxied here.
+// Path rewriting:  /customer/business  →  AI Comm /api/v1/business
+//                  /customer/channels  →  AI Comm /api/v1/channels
+//                  /customer/users     →  AI Comm /api/v1/users
+//                  /customer/conversations/stats  →  AI Comm /api/v1/conversations/stats
+//                  /customer/messages/stats       →  AI Comm /api/v1/messages/stats
+//
+// The customer's Bearer token is forwarded transparently — AI Comm validates it.
+// ---------------------------------------------------------------------------
+
+if (communicationProxyTarget) {
+  router.use('/customer', buildProxy(communicationProxyTarget, '/api/v1', 'AI Communication'));
+} else {
+  router.use('/customer', serviceUnavailable('AI Communication'));
 }
 
 export default router;
