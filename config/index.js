@@ -116,7 +116,7 @@ export const config = {
 	// ─── Tenancy (multi-tenant lead scoping) ─────────────────────────────────
 	tenant: {
 		enabled: process.env.TENANCY_ENABLED !== 'false',
-		defaultTenantId: process.env.DEFAULT_TENANT_ID || 'easydev',
+		defaultTenantId: process.env.DEFAULT_TENANT_ID || process.env.TENANT_ID || 'easydev',
 	},
 
 	// ─── Redis (optional — lead rate-limiter and scheduler lock) ─────────────

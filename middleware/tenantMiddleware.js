@@ -1,7 +1,10 @@
 /**
  * Tenant middleware.
- * requireTenantHeader — public routes: reads x-tenant-id header.
- * setTenantFromUser   — authenticated routes: reads tenantId from JWT payload.
+ * Both middlewares resolve tenantId from the x-tenant-id header (injected by
+ * app.js if omitted, so clients never need to send it explicitly in single-tenant mode).
+ *
+ * requireTenantHeader — public routes
+ * setTenantFromUser   — authenticated routes (same header-based resolution)
  */
 import AppError from '../utils/appError.js';
 import { config } from '../config/index.js';
@@ -9,14 +12,14 @@ import { config } from '../config/index.js';
 const TENANCY_ENABLED = config.tenant.enabled;
 const DEFAULT_TENANT_ID = config.tenant.defaultTenantId || 'easydev';
 
-export const requireTenantHeader = (req, res, next) => {
+function resolveFromHeader(req, res, next) {
   if (!TENANCY_ENABLED) {
     req.tenantId = null;
     return next();
   }
   const tenantId = ((req.headers['x-tenant-id'] || DEFAULT_TENANT_ID) || '').trim();
   if (!tenantId) {
-    req.tenantId = 'easydev';
+    req.tenantId = DEFAULT_TENANT_ID;
     return next();
   }
   const isObjectId = /^[a-f\d]{24}$/i.test(tenantId);
@@ -26,13 +29,7 @@ export const requireTenantHeader = (req, res, next) => {
   }
   req.tenantId = tenantId;
   next();
-};
+}
 
-export const setTenantFromUser = (req, res, next) => {
-  if (!TENANCY_ENABLED) {
-    req.tenantId = null;
-    return next();
-  }
-  req.tenantId = req.user?.tenantId || DEFAULT_TENANT_ID || 'easydev';
-  next();
-};
+export const requireTenantHeader = resolveFromHeader;
+export const setTenantFromUser   = resolveFromHeader;
