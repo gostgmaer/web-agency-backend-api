@@ -54,6 +54,53 @@ export const config = {
 	// client passes its own x-tenant-id header and this is not used.
 	tenantId: process.env.TENANT_ID || null,
 
+	// ─── Payment Gateways ────────────────────────────────────────────────────
+	razorpay: {
+		keyId:     process.env.RAZORPAY_KEY_ID,
+		keySecret: process.env.RAZORPAY_KEY_SECRET,
+		webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+	},
+	stripe: {
+		secretKey:     process.env.STRIPE_SECRET_KEY,
+		webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+		publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+	},
+
+	// ─── Multi-Product Configuration ─────────────────────────────────────────
+	// Each product key maps a product ID to its provisioning details.
+	// After a successful payment web-agency-backend-api calls the product's
+	// provision URL with the configured API key.
+	//
+	// Supported provisionType values:
+	//   "easydev-communication" — calls POST /onboarding/create-account on the
+	//                             AI Communication NestJS backend.
+	//
+	// Add further products by adding more keys. The product ID is passed in the
+	// checkout request as { productId: "easydev-communication" } and matched here.
+	products: {
+		// EasyDev AI Communication Platform
+		'easydev-communication': {
+			name:          'EasyDev Communication AI',
+			provisionType: 'easydev-communication',
+			apiUrl:        process.env.COMMUNICATION_API_URL || 'http://localhost:3001/api/v1',
+			apiKey:        process.env.COMMUNICATION_API_KEY,
+			// EasyDev plan key → Communication platform plan enum
+			planMap: {
+				starter:  'PRO',
+				growth:   'PRO',
+				business: 'ENTERPRISE',
+				free:     'FREE',
+			},
+		},
+		// Add future products here, e.g.:
+		// 'easydev-analytics': {
+		//   name: 'EasyDev Analytics',
+		//   provisionType: 'generic-webhook',
+		//   apiUrl: process.env.ANALYTICS_API_URL,
+		//   apiKey: process.env.ANALYTICS_API_KEY,
+		// },
+	},
+
 	logging: {
 		enabled: process.env.ENABLE_LOGGING !== "false",
 		level: process.env.LOG_LEVEL || (process.env.NODE_ENV === "production" ? "info" : "debug"),

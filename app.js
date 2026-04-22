@@ -13,9 +13,11 @@ import path from "path";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
 // Routes — owned by this service
-import newsletterRoutes from "./routes/newsletter.js";
-import uploadRoutes from "./routes/upload.js";
-import calculatorRoutes from "./routes/calculator.js";
+import newsletterRoutes     from "./routes/newsletter.js";
+import uploadRoutes         from "./routes/upload.js";
+import calculatorRoutes     from "./routes/calculator.js";
+import paymentsRoutes       from "./routes/payments.js";
+import communicationRoutes  from "./routes/communication.js";
 
 // Proxy routes — forwarded to microservices
 import proxyRoutes from "./routes/proxy.js";
@@ -197,9 +199,22 @@ if (config.tenantId) {
     next();
   });
 }
-app.use("/api/newsletter", jsonParser, urlencodedParser, newsletterRoutes);
-app.use("/api/upload",     jsonParser, urlencodedParser, uploadRoutes);
-app.use("/api/calculator", jsonParser,                   calculatorRoutes);
+app.use("/api/newsletter",    jsonParser, urlencodedParser, newsletterRoutes);
+app.use("/api/upload",        jsonParser, urlencodedParser, uploadRoutes);
+app.use("/api/calculator",    jsonParser,                   calculatorRoutes);
+app.use("/api/communication", jsonParser,                   communicationRoutes);
+
+// Webhook routes require raw (unparsed) body for HMAC signature verification.
+// We skip jsonParser for /webhooks/* paths; those routes apply express.raw()
+// internally. All other payment routes get standard JSON body parsing.
+app.use(
+  "/api/payments",
+  (req, res, next) => {
+    if (req.path.startsWith("/webhooks/")) return next();  // raw handled in-router
+    return jsonParser(req, res, next);
+  },
+  paymentsRoutes
+);
 
 // Proxy routes — transparently forwarded to microservices
 // NOTE: proxy routes must come AFTER body-parsing middleware but the
