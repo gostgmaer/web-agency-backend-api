@@ -27,11 +27,14 @@ export const authenticate = (req, res, next) => {
       audience: JWT_AUDIENCE,
     });
 
-    // Map user-auth-service JWT claims to a consistent shape
+    // Map user-auth-service JWT claims to a consistent shape.
+    // IAM tokens carry `roles: string[]` — take the first entry as the
+    // canonical single-role value used by adminAccess / authorize().
+    const roleFromArray = Array.isArray(decoded.roles) ? decoded.roles[0] : undefined;
     req.user = {
-      id: decoded.sub,           // MongoDB ObjectId string
+      id: decoded.sub,
       email: decoded.email,
-      role: decoded.role,
+      role: decoded.role ?? roleFromArray,
       tenantId: decoded.tenantId,
       sessionId: decoded.sessionId,
     };

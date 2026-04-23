@@ -116,3 +116,32 @@ export const sendNewsletterFarewell = async (subscriber) => {
 		throw error;
 	}
 };
+
+/**
+ * Sends a welcome email after a user purchases and their AI Communication account is provisioned.
+ * Template: AI_COMMUNICATION_WELCOME
+ *
+ * @param {{ name: string, email: string, loginUrl: string, temporaryPassword: string, planName: string }} params
+ */
+export const sendAiCommunicationWelcome = async ({ name, email, loginUrl, temporaryPassword, planName }) => {
+	try {
+		await sendEmail({
+			to: email,
+			templateId: 'AI_COMMUNICATION_WELCOME',
+			data: {
+				name: name || email,
+				email,
+				loginUrl,
+				temporaryPassword,
+				planName: planName || 'Pro',
+				companyName: 'EasyDev',
+				appName: 'EasyDev Communication AI',
+				supportEmail: config.admin.email || 'support@easydev.in',
+			},
+		});
+		logger.info('AI Communication welcome email sent', { email });
+	} catch (error) {
+		logger.error('Failed to send AI Communication welcome email', { email, error: error.message });
+		// non-fatal — do not re-throw
+	}
+};

@@ -1,5 +1,6 @@
 import express from 'express';
 import { authenticate } from '../middleware/auth.js';
+import adminAccess from '../middleware/adminAccess.js';
 import { validateRequest, sanitizeInput } from '../middleware/validation.js';
 import { subscribeValidation, unsubscribeValidation } from '../validation/newsletterValidation.js';
 import { getPaginationParams, getPaginationMeta } from '../utils/pagination.js';
@@ -169,7 +170,7 @@ router.post('/unsubscribe', unsubscribeValidation, validateRequest, async (req, 
   }
 });
 
-router.get('/subscribers', authenticate, async (req, res, next) => {
+router.get('/subscribers', authenticate, adminAccess, async (req, res, next) => {
   try {
     const { page, limit, skip } = getPaginationParams(req);
     const { isActive, isConfirmed, tag, search } = req.query;
@@ -204,7 +205,7 @@ router.get('/subscribers', authenticate, async (req, res, next) => {
   }
 });
 
-router.get('/stats', authenticate, async (req, res, next) => {
+router.get('/stats', authenticate, adminAccess, async (req, res, next) => {
   try {
     const stats = await Newsletter.getStats();
 
@@ -238,7 +239,7 @@ router.get('/stats', authenticate, async (req, res, next) => {
   }
 });
 
-router.get('/subscriber/:id', authenticate, async (req, res, next) => {
+router.get('/subscriber/:id', authenticate, adminAccess, async (req, res, next) => {
   try {
     const subscriber = await Newsletter.findById(req.params.id)
       .select('-confirmationToken');
@@ -257,7 +258,7 @@ router.get('/subscriber/:id', authenticate, async (req, res, next) => {
   }
 });
 
-router.patch('/subscriber/:id/tags', authenticate, async (req, res, next) => {
+router.patch('/subscriber/:id/tags', authenticate, adminAccess, async (req, res, next) => {
   try {
     const { tags } = req.body;
 
@@ -329,7 +330,7 @@ router.post('/track/click', async (req, res, next) => {
   }
 });
 
-router.delete('/subscriber/:id', authenticate, async (req, res, next) => {
+router.delete('/subscriber/:id', authenticate, adminAccess, async (req, res, next) => {
   try {
     const subscriber = await Newsletter.findOneAndUpdate(
       { _id: req.params.id, isDeleted: { $ne: true } },

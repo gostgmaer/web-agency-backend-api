@@ -45,32 +45,13 @@ function buildProxy(target, basePath, serviceName) {
 }
 
 // ---------------------------------------------------------------------------
-// AI Communication — Customer Auth  (/api/auth/customer/**)
-//
-// MUST be registered BEFORE the generic /auth proxy so that
-// /auth/customer/* hits the AI Communication backend, not user-auth-service.
-//
-// Path rewriting:  /auth/customer/login  →  AI Comm /api/v1/auth/login
-// ---------------------------------------------------------------------------
-
-const communicationApiUrl = config.products?.['easydev-communication']?.apiUrl;
-const communicationProxyTarget = communicationApiUrl
-  ? communicationApiUrl.replace(/\/api\/v1\/?$/, '')
-  : null;
-
-if (communicationProxyTarget) {
-  router.use('/auth/customer', buildProxy(communicationProxyTarget, '/api/v1/auth', 'AI Communication Auth'));
-} else {
-  router.use('/auth/customer', serviceUnavailable('AI Communication Auth'));
-}
-
-// ---------------------------------------------------------------------------
 // Auth Service  (/api/auth/**, /api/admin/**)
 // ---------------------------------------------------------------------------
 
 if (config.auth.serviceUrl) {
-  router.use('/auth', buildProxy(config.auth.serviceUrl, '/api/auth', 'User Auth Service'));
-  router.use('/admin', buildProxy(config.auth.serviceUrl, '/api/admin', 'User Auth Service'));
+  // IAM global prefix is api/v1/iam — rewrite paths accordingly
+  router.use('/auth', buildProxy(config.auth.serviceUrl, '/api/v1/iam/auth', 'User Auth Service'));
+  router.use('/admin', buildProxy(config.auth.serviceUrl, '/api/v1/iam/admin', 'User Auth Service'));
 } else {
   router.use('/auth', serviceUnavailable('User Auth Service'));
   router.use('/admin', serviceUnavailable('User Auth Service'));
@@ -98,6 +79,8 @@ if (config.fileUpload.serviceUrl) {
 //
 // The customer's Bearer token is forwarded transparently — AI Comm validates it.
 // ---------------------------------------------------------------------------
+
+const communicationProxyTarget = config.communication?.serviceUrl ?? null;
 
 if (communicationProxyTarget) {
   router.use('/customer', buildProxy(communicationProxyTarget, '/api/v1', 'AI Communication'));

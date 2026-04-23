@@ -18,6 +18,7 @@
 
 import { config } from '../config/index.js';
 import logger from './logger.js';
+import { sendAiCommunicationWelcome } from './email.js';
 
 // ─── Public entry point ────────────────────────────────────────────────────────
 
@@ -148,6 +149,15 @@ async function _provisionCommunication(productCfg, data) {
     businessId: result.businessId,
     email:      data.email,
   });
+
+  // Send welcome email with login instructions (fire-and-forget — non-fatal)
+  sendAiCommunicationWelcome({
+    name:              data.name,
+    email:             data.email,
+    loginUrl:          result.loginUrl,
+    temporaryPassword: result.temporaryPassword,
+    planName:          communicationPlan,
+  }).catch(() => {}); // errors already logged inside sendAiCommunicationWelcome
 
   return {
     loginUrl:          result.loginUrl,

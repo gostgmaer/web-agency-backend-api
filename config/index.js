@@ -42,6 +42,24 @@ export const config = {
 	fileUpload: { serviceUrl: process.env.FILE_UPLOAD_SERVICE_URL },
 	auth: { serviceUrl: process.env.AUTH_SERVICE_URL },
 
+	// ─── IAM Service ─────────────────────────────────────────────────────────
+	// Used to generate SSO tokens for product launch (auto-login)
+	iam: {
+		serviceUrl:    process.env.IAM_SERVICE_URL || 'http://localhost:3100',
+		adminJwt:      process.env.IAM_ADMIN_JWT || '',
+		applicationId: process.env.IAM_APPLICATION_ID || '',
+		tenantId:      process.env.IAM_TENANT_ID || '',
+		// URL of the AI Communication frontend — SSO redirect target
+		commFrontendUrl: process.env.COMMUNICATION_FRONTEND_URL || 'http://localhost:3002',
+	},
+
+	// ─── AI Communication Service ─────────────────────────────────────────────
+	// Base URL of the AI Communication NestJS backend (no path suffix).
+	// Used by the /api/customer/** proxy to forward authenticated customer calls.
+	communication: {
+		serviceUrl: process.env.COMMUNICATION_SERVICE_URL || 'http://localhost:3001',
+	},
+
 	// Tenant ID — used as a fallback x-tenant-id for all proxied requests.
 	// Required for single-tenant deployments; in multi-tenant mode, each
 	// client passes its own x-tenant-id header and this is not used.
