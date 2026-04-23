@@ -61,12 +61,13 @@ if (config.auth.serviceUrl) {
   router.use('/iam/api-keys',  buildProxy(config.auth.serviceUrl, '/api/v1/iam/api-keys',      'User Auth Service'));
   router.use('/iam/webhooks',  buildProxy(config.auth.serviceUrl, '/api/v1/iam/webhooks',      'User Auth Service'));
   router.use('/iam/flags',     buildProxy(config.auth.serviceUrl, '/api/v1/iam/feature-flags', 'User Auth Service'));
+  router.use('/iam/apps',      buildProxy(config.auth.serviceUrl, '/api/v1/iam/apps',           'User Auth Service'));
   // Legacy /admin path kept for backward-compatibility but no longer used — remove once all clients updated
   router.use('/admin',         buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
 } else {
   for (const path of ['/auth', '/rbac', '/users', '/tenants', '/sessions',
                        '/iam/logs', '/iam/stats', '/iam/security', '/iam/api-keys',
-                       '/iam/webhooks', '/iam/flags', '/admin']) {
+                       '/iam/webhooks', '/iam/flags', '/iam/apps', '/admin']) {
     router.use(path, serviceUnavailable('User Auth Service'));
   }
 }
