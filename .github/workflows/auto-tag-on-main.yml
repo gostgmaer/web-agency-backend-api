@@ -1,4 +1,4 @@
-name: Auto Tag on Main
+name: Release on Merge
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  create-tag:
+  release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create and push tag
+      - name: Get next tag
         shell: bash
         run: |
           set -euo pipefail
@@ -36,8 +36,18 @@ jobs:
           fi
 
           NEXT_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "NEW_TAG=$NEXT_TAG" >> $GITHUB_ENV
 
+      - name: Create and push tag
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$NEXT_TAG"
-          git push origin "$NEXT_TAG"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.NEW_TAG }}
+          name: Release ${{ env.NEW_TAG }}
+          generate_release_notes: true
