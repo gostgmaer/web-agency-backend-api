@@ -54,11 +54,16 @@ export const config = {
 	},
 
 	// ─── AI Communication Service ─────────────────────────────────────────────
-	// Base URL of the AI Communication NestJS backend (no path suffix).
-	// Used by the /api/customer/** proxy to forward authenticated customer calls.
-	communication: {
-		serviceUrl: process.env.COMMUNICATION_SERVICE_URL || 'http://localhost:3001',
-	},
+	// Full versioned API URL, e.g. http://localhost:4001/api/v1
+	// Parsed here so nothing downstream needs to know the version prefix.
+	communication: (() => {
+		const raw = process.env.COMMUNICATION_URL || 'http://localhost:4001/api/v1';
+		const parsed = new URL(raw);
+		return {
+			proxyTarget: `${parsed.protocol}//${parsed.host}`,     // host only  — proxy target
+			proxyPath:   parsed.pathname.replace(/\/$/, ''),       // /api/v1    — proxy path prefix
+		};
+	})(),
 
 	// Tenant ID — used as a fallback x-tenant-id for all proxied requests.
 	// Required for single-tenant deployments; in multi-tenant mode, each
@@ -93,7 +98,7 @@ export const config = {
 		'easydev-communication': {
 			name:          'EasyDev Communication AI',
 			provisionType: 'easydev-communication',
-			apiUrl:        process.env.COMMUNICATION_API_URL || 'http://localhost:3001/api/v1',
+			provisionUrl:  process.env.COMMUNICATION_URL || 'http://localhost:4001/api/v1',
 			apiKey:        process.env.COMMUNICATION_API_KEY,
 			// EasyDev plan key → Communication platform plan enum
 			planMap: {

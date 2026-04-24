@@ -85,7 +85,7 @@ async function _provisionCommunication(productCfg, data) {
     ...(data.externalId  ? { externalId: data.externalId  } : {}),
   };
 
-  const url = `${productCfg.apiUrl}/onboarding/create-account`;
+  const url = `${productCfg.provisionUrl}/onboarding/create-account`;
 
   let res;
   try {

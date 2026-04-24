@@ -95,10 +95,11 @@ if (config.fileUpload.serviceUrl) {
 // The customer's Bearer token is forwarded transparently — AI Comm validates it.
 // ---------------------------------------------------------------------------
 
-const communicationProxyTarget = config.communication?.serviceUrl ?? null;
+const communicationProxyTarget = config.communication?.proxyTarget ?? null;
+const communicationProxyPath   = config.communication?.proxyPath   ?? '/api/v1';
 
 if (communicationProxyTarget) {
-  router.use('/customer', buildProxy(communicationProxyTarget, '/api/v1', 'AI Communication'));
+  router.use('/customer', buildProxy(communicationProxyTarget, communicationProxyPath, 'AI Communication'));
 } else {
   router.use('/customer', serviceUnavailable('AI Communication'));
 }
