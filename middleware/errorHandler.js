@@ -149,11 +149,13 @@ export const errorHandler = (err, req, res, next) => {
 
   // Build response
   const statusCode = error.statusCode || 500;
+  const humanMessage = isDevelopment ? error.message : getHumanReadableMessage(error);
   const response = {
     success: false,
+    message: humanMessage,
     error: {
       code: error.code || 'INTERNAL_ERROR',
-      message: isDevelopment ? error.message : getHumanReadableMessage(error),
+      message: humanMessage,
       errorId // Include error ID for support reference
     }
   };
@@ -191,13 +193,16 @@ export const notFound = (req, res) => {
     ip: req.ip
   });
 
+  const notFoundMessage = isDevelopment
+    ? `The route ${req.method} ${req.originalUrl} does not exist on this server.`
+    : 'The page you are looking for does not exist.';
+
   res.status(404).json({
     success: false,
+    message: notFoundMessage,
     error: {
       code: 'ROUTE_NOT_FOUND',
-      message: isDevelopment
-        ? `The route ${req.method} ${req.originalUrl} does not exist on this server.`
-        : 'The page you are looking for does not exist.',
+      message: notFoundMessage,
       errorId
     }
   });
