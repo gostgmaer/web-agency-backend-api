@@ -50,23 +50,24 @@ function buildProxy(target, basePath, serviceName) {
 
 if (config.auth.serviceUrl) {
   // IAM global prefix is api/v1/iam — rewrite paths accordingly
-  router.use('/auth',          buildProxy(config.auth.serviceUrl, '/api/v1/iam/auth',          'User Auth Service'));
-  router.use('/rbac',          buildProxy(config.auth.serviceUrl, '/api/v1/iam/rbac',          'User Auth Service'));
-  router.use('/users',         buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
-  router.use('/tenants',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/tenants',       'User Auth Service'));
-  router.use('/sessions',      buildProxy(config.auth.serviceUrl, '/api/v1/iam/sessions',      'User Auth Service'));
-  router.use('/iam/logs',      buildProxy(config.auth.serviceUrl, '/api/v1/iam/logs',          'User Auth Service'));
-  router.use('/iam/stats',     buildProxy(config.auth.serviceUrl, '/api/v1/iam/stats',         'User Auth Service'));
-  router.use('/iam/security',  buildProxy(config.auth.serviceUrl, '/api/v1/iam/security',      'User Auth Service'));
-  router.use('/iam/api-keys',  buildProxy(config.auth.serviceUrl, '/api/v1/iam/api-keys',      'User Auth Service'));
-  router.use('/iam/webhooks',  buildProxy(config.auth.serviceUrl, '/api/v1/iam/webhooks',      'User Auth Service'));
-  router.use('/iam/flags',     buildProxy(config.auth.serviceUrl, '/api/v1/iam/feature-flags', 'User Auth Service'));
-  router.use('/iam/apps',      buildProxy(config.auth.serviceUrl, '/api/v1/iam/apps',           'User Auth Service'));
+  router.use('/auth',               buildProxy(config.auth.serviceUrl, '/api/v1/iam/auth',          'User Auth Service'));
+  router.use('/rbac',               buildProxy(config.auth.serviceUrl, '/api/v1/iam/rbac',          'User Auth Service'));
+  router.use('/users',              buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
+  router.use('/tenants',            buildProxy(config.auth.serviceUrl, '/api/v1/iam/tenants',       'User Auth Service'));
+  router.use('/sessions',           buildProxy(config.auth.serviceUrl, '/api/v1/iam/sessions',      'User Auth Service'));
+  router.use('/iam/health',         buildProxy(config.auth.serviceUrl, '/api/v1/iam/health',        'User Auth Service'));
+  router.use('/iam/logs',           buildProxy(config.auth.serviceUrl, '/api/v1/iam/logs',          'User Auth Service'));
+  router.use('/iam/stats',          buildProxy(config.auth.serviceUrl, '/api/v1/iam/stats',         'User Auth Service'));
+  router.use('/iam/security',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/security',      'User Auth Service'));
+  router.use('/iam/api-keys',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/api-keys',      'User Auth Service'));
+  router.use('/iam/webhooks',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/webhooks',      'User Auth Service'));
+  router.use('/iam/flags',          buildProxy(config.auth.serviceUrl, '/api/v1/iam/feature-flags', 'User Auth Service'));
+  router.use('/iam/apps',           buildProxy(config.auth.serviceUrl, '/api/v1/iam/apps',          'User Auth Service'));
   // Legacy /admin path kept for backward-compatibility but no longer used — remove once all clients updated
-  router.use('/admin',         buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
+  router.use('/admin',              buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
 } else {
   for (const path of ['/auth', '/rbac', '/users', '/tenants', '/sessions',
-                       '/iam/logs', '/iam/stats', '/iam/security', '/iam/api-keys',
+                       '/iam/health', '/iam/logs', '/iam/stats', '/iam/security', '/iam/api-keys',
                        '/iam/webhooks', '/iam/flags', '/iam/apps', '/admin']) {
     router.use(path, serviceUnavailable('User Auth Service'));
   }

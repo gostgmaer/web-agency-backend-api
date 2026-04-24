@@ -65,6 +65,11 @@ export const config = {
 		};
 	})(),
 
+	// ─── Notification Service ─────────────────────────────────────────────────
+	notification: {
+		healthUrl: process.env.NOTIFICATION_SERVICE_HEALTH_URL || 'https://notification-service-iota.vercel.app/v1/health/detailed',
+	},
+
 	// Tenant ID — used as a fallback x-tenant-id for all proxied requests.
 	// Required for single-tenant deployments; in multi-tenant mode, each
 	// client passes its own x-tenant-id header and this is not used.

@@ -22,6 +22,8 @@ import leadRoutes           from "./routes/leads.js";
 
 // Proxy routes — forwarded to microservices
 import proxyRoutes from "./routes/proxy.js";
+// Platform health aggregator — pings all services + product apps
+import platformHealthRoutes from "./routes/platform-health.js";
 
 import logger from "./utils/logger.js";
 import { config } from "./config/index.js";
@@ -205,6 +207,7 @@ app.use("/api/upload",        jsonParser, urlencodedParser, uploadRoutes);
 app.use("/api/calculator",    jsonParser,                   calculatorRoutes);
 app.use("/api/communication", jsonParser,                   communicationRoutes);
 app.use("/api/leads",         jsonParser, urlencodedParser, leadRoutes);
+app.use("/api/platform-health", jsonParser,                 platformHealthRoutes);
 
 // Webhook routes require raw (unparsed) body for HMAC signature verification.
 // We skip jsonParser for /webhooks/* paths; those routes apply express.raw()
