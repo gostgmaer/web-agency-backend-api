@@ -1,0 +1,11 @@
+﻿.git
+.env
+.env.*
+!.env.example
+logs
+*.log
+uploads
+Dockerfile*
+docker-compose*.yml
+.github
+node_modules/.pnpm
