@@ -2,11 +2,13 @@
 
 # No native modules in this service — no build tools needed
 
-# Retry pnpm install up to 3 times — Docker Desktop TLS can be flaky
-RUN for i in 1 2 3; do \
-    npm install -g pnpm@9 --quiet && break || \
-    (echo "pnpm install attempt $i failed, retrying..." && sleep 3); \
-  done && pnpm --version
+# Enable corepack (ships with Node 16.10+) and activate pnpm@9.
+# corepack enable creates shims; corepack prepare downloads + pins the version.
+RUN corepack enable && \
+    for i in 1 2 3; do \
+      corepack prepare pnpm@9 --activate && break || \
+      (echo "corepack prepare attempt $i failed, retrying..." && sleep 3); \
+    done && pnpm --version
 
 WORKDIR /app
 

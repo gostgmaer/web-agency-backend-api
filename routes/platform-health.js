@@ -43,7 +43,7 @@ async function pingUrl(url, name) {
     // Convert { key: { status: "up" } } → { key: "up" } for display consistency.
     let checks = payload?.checks ?? payload?.info ?? payload?.details ?? undefined;
     if (checks && typeof checks === "object" && !Array.isArray(checks)) {
-d       // Normalise { key: { status: "up"|"ok" } } → { key: "ok"|<value> }
+      // Normalise { key: { status: "up"|"ok" } } → { key: "ok"|<value> }
       checks = Object.fromEntries(
         Object.entries(checks).map(([k, v]) => {
           const raw = typeof v === "object" && v !== null && "status" in v ? v.status : v;
@@ -80,7 +80,11 @@ router.get("/", async (req, res, next) => {
       services.push(await pingUrl(`${authServiceUrl}/api/v1/iam/health`, "IAM Platform"));
     }
 
-
+    // ── 2. Payment Microservice ───────────────────────────────────────────────
+    const paymentServiceUrl = config.payment?.serviceUrl;
+    if (paymentServiceUrl) {
+      services.push(await pingUrl(`${paymentServiceUrl}/api/v1/health`, "Payment Service"));
+    }
 
     // ── 3. Notification service ─────────────────────────────────────────────
     const notificationHealthUrl = config.notification?.healthUrl;
@@ -88,7 +92,7 @@ router.get("/", async (req, res, next) => {
       services.push(await pingUrl(notificationHealthUrl, "Notification Service"));
     }
 
-    // ── 3. Product applications (requires forwarded auth token) ────────────
+    // ── 4. Product applications (requires forwarded auth token) ────────────
     const products = [];
     const authHeader = req.headers["authorization"];
     if (authHeader && authServiceUrl) {
