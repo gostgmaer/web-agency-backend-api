@@ -43,14 +43,11 @@ export const config = {
 	auth: { serviceUrl: process.env.AUTH_SERVICE_URL },
 
 	// ─── IAM Service ─────────────────────────────────────────────────────────
-	// Used to generate SSO tokens for product launch (auto-login)
+	// Same service as config.auth — AUTH_SERVICE_URL is the single source of truth.
+	// iam.serviceUrl is used for SSO token generation calls.
+	// No per-product APP_ID env vars — the key in config.products IS the IAM slug.
 	iam: {
-		serviceUrl:    process.env.IAM_SERVICE_URL || 'http://localhost:3100',
-		adminJwt:      process.env.IAM_ADMIN_JWT || '',
-		applicationId: process.env.IAM_APPLICATION_ID || '',
-		tenantId:      process.env.IAM_TENANT_ID || '',
-		// URL of the AI Communication frontend — SSO redirect target
-		commFrontendUrl: process.env.COMMUNICATION_FRONTEND_URL || 'http://localhost:3002',
+		serviceUrl: process.env.AUTH_SERVICE_URL || 'http://localhost:3100',
 	},
 
 	// ─── AI Communication Service ─────────────────────────────────────────────
@@ -76,15 +73,20 @@ export const config = {
 	tenantId: process.env.TENANT_ID || null,
 
 	// ─── Payment Gateways ────────────────────────────────────────────────────
+	// Only the Razorpay public key is needed here — returned to the frontend
+	// checkout UI. All secrets and webhook handling live in payment-microservice.
 	razorpay: {
-		keyId:     process.env.RAZORPAY_KEY_ID,
-		keySecret: process.env.RAZORPAY_KEY_SECRET,
-		webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+		keyId: process.env.RAZORPAY_KEY_ID,
 	},
-	stripe: {
-		secretKey:     process.env.STRIPE_SECRET_KEY,
-		webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-		publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+
+	// ─── Payment Microservice ──────────────────────────────────────────────
+	// Central payment processing service. web-agency-backend-api delegates all
+	// checkout and webhook operations here via service-to-service API key auth.
+	payment: {
+		serviceUrl: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3000',
+		// API key sent as x-api-key header. Must match API_KEY_HASH on the
+		// payment-microservice side (SHA-256 hash of this plaintext key).
+		apiKey: process.env.PAYMENT_SERVICE_API_KEY || '',
 	},
 
 	// ─── Multi-Product Configuration ─────────────────────────────────────────

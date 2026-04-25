@@ -1,46 +1,111 @@
 /**
  * routes/payments.js
  *
- * Handles payment gateway integration for all EasyDev products.
+ * Payment adapter — delegates all gateway processing to payment-microservice.
  *
- * Supported gateways:
- *   - Razorpay  (popular in India)
- *   - Stripe    (international)
+ * The public-facing API surface (URLs, request/response bodies) is preserved
+ * so the easydev frontend requires zero changes.
  *
- * Every successful payment ends with a call to productProvisioner.provision()
- * which creates the purchased product's account and returns a loginUrl.
+ * Checkout routes call payment-microservice with service-to-service API key
+ * auth (no user JWT required for public checkout flows).
  *
- * Required env vars (per gateway — leave unset to disable that gateway):
- *   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
- *   STRIPE_SECRET_KEY,  STRIPE_WEBHOOK_SECRET
+ * Admin routes forward the caller's JWT to payment-microservice for full
+ * RBAC enforcement.
+ *
+ * In-memory pending order store maps provider order/session ID → PM transaction
+ * data needed for the verify step. For multi-instance deployments, replace the
+ * Map with a Redis-backed TTL store.
  *
  * POST /api/payments/razorpay/create-order
  * POST /api/payments/razorpay/verify
  * POST /api/payments/stripe/create-session
  * GET  /api/payments/stripe/verify-session
- * POST /api/payments/webhooks/razorpay   (Razorpay server-to-server webhook)
- * POST /api/payments/webhooks/stripe     (Stripe server-to-server webhook)
+ * POST /api/payments/webhooks/razorpay
+ * POST /api/payments/webhooks/stripe
+ * GET  /api/payments/admin/stats
+ * GET  /api/payments/admin/transactions
+ * GET  /api/payments/admin/subscriptions
  */
 
-import express            from 'express';
-import crypto             from 'crypto';
-import { config }         from '../config/index.js';
-import logger             from '../utils/logger.js';
-import { provision }      from '../utils/productProvisioner.js';
-import { AppError }       from '../utils/errors.js';
+import express       from 'express';
+import { randomUUID } from 'crypto';
+import { config }    from '../config/index.js';
+import logger        from '../utils/logger.js';
+import { provision } from '../utils/productProvisioner.js';
+import { AppError }  from '../utils/errors.js';
+import { apiCall }   from '../lib/axiosCall.js';
+import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Plan price catalog ───────────────────────────────────────────────────────
 
-/** Resolve the effective productId: explicit field beats plan-key heuristic. */
-function resolveProductId(body) {
-  if (body.productId) return body.productId;
-  // Default to AI Communication for backward-compat with EasyDev checkout
-  return 'easydev-communication';
+/** Razorpay amounts in paise (INR smallest unit). */
+const PLAN_PAISE = {
+  starter:  199900,   // ₹1,999
+  growth:   499900,   // ₹4,999
+  business: 1299900,  // ₹12,999
+};
+
+/** Stripe amounts in cents (USD smallest unit). */
+const PLAN_CENTS = {
+  starter:  2700,   // $27
+  growth:   6700,   // $67
+  business: 17400,  // $174
+};
+
+// ─── Pending order store ──────────────────────────────────────────────────────
+// Maps provider orderId / sessionId → { transactionId, attemptId, planKey, customerEmail }
+// Entries expire after PENDING_TTL_MS to prevent unbounded growth.
+
+const pendingOrders = new Map();
+const PENDING_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function storePending(key, value) {
+  // Evict stale entries on every write (lazy GC)
+  for (const [k, v] of pendingOrders.entries()) {
+    if (v.expiresAt < Date.now()) pendingOrders.delete(k);
+  }
+  pendingOrders.set(key, { ...value, expiresAt: Date.now() + PENDING_TTL_MS });
 }
 
-/** Shared provisioning handler — used by both Razorpay verify and Stripe success. */
+function getPending(key) {
+  const entry = pendingOrders.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    pendingOrders.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const pmUrl = () => config.payment?.serviceUrl || 'http://localhost:3000';
+
+/** Service-to-service headers for payment-microservice (API key auth). */
+function pmServiceHeaders(tenantId) {
+  return {
+    'x-api-key':    config.payment?.apiKey || '',
+    'x-tenant-id':  tenantId || config.tenantId || 'easydev',
+    'Content-Type': 'application/json',
+  };
+}
+
+/** User JWT passthrough headers for admin calls to payment-microservice. */
+function pmAuthHeaders(bearerToken, tenantId) {
+  return {
+    'Authorization': bearerToken || '',
+    'x-tenant-id':   tenantId || config.tenantId || 'easydev',
+    'Content-Type':  'application/json',
+  };
+}
+
+function resolveProductId(body) {
+  return body.productId || 'easydev-communication';
+}
+
+/** Shared post-payment provisioning: provision the product account and respond. */
 async function handlePostPayment(res, { productId, name, email, planKey, paymentId, businessName, externalId }) {
   let provisionResult = null;
   try {
@@ -52,31 +117,22 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
       businessName: businessName || name,
       externalId,
     });
-  } catch (provisionErr) {
-    // Payment succeeded but provisioning failed — return partial success so the
-    // frontend can still redirect to the dashboard and we can retry later.
+  } catch (err) {
     logger.error('Post-payment provisioning error (payment was successful)', {
       productId,
       email,
-      error: provisionErr.message,
+      error: err.message,
     });
     return res.status(200).json({
       success: true,
       message: 'Payment verified. Account setup encountered an issue — our team has been notified.',
-      data: {
-        paymentVerified:   true,
-        provisioningError: provisionErr.message,
-      },
+      data: { paymentVerified: true, provisioningError: err.message },
     });
   }
-
   return res.status(200).json({
     success: true,
     message: 'Payment verified and account provisioned.',
-    data: {
-      paymentVerified: true,
-      ...provisionResult,
-    },
+    data: { paymentVerified: true, ...provisionResult },
   });
 }
 
@@ -87,61 +143,70 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
 /**
  * POST /api/payments/razorpay/create-order
  *
- * Body: { planKey, customerEmail, productId? }
+ * Delegates to payment-microservice POST /api/v1/payments/initiate.
+ * Body:    { planKey, customerEmail, productId?, amount? }
  * Returns: { orderId, amount, currency, keyId }
  */
 router.post('/razorpay/create-order', async (req, res, next) => {
   try {
-    const { keyId, keySecret } = config.razorpay ?? {};
-    if (!keyId || !keySecret) {
-      throw new AppError('Razorpay is not configured on this server.', 503);
+    if (!config.payment?.apiKey) {
+      throw new AppError('Payment service is not configured on this server.', 503);
     }
 
-    const { planKey, customerEmail, productId: _productId, amount: rawAmount } = req.body;
+    const { planKey, customerEmail, amount: rawAmount } = req.body;
     if (!planKey || !customerEmail) {
       throw new AppError('planKey and customerEmail are required.', 400);
     }
 
-    // Determine amount in paise (INR smallest unit).
-    // For a real deployment load the price from your DB / price catalog.
-    // Here we map the EasyDev plan keys to fixed amounts.
-    const PLAN_AMOUNT_PAISE = {
-      starter:  199900,   // ₹1,999
-      growth:   499900,   // ₹4,999
-      business: 1299900,  // ₹12,999
-    };
-    const amount = rawAmount ?? PLAN_AMOUNT_PAISE[planKey?.toLowerCase()] ?? 499900;
+    const amount   = rawAmount ?? PLAN_PAISE[planKey?.toLowerCase()] ?? 499900;
+    const orderId  = randomUUID();
+    const idempKey = randomUUID();
+    const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
 
-    // Call Razorpay Orders API
-    const credentials = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
-    const rzRes = await fetch('https://api.razorpay.com/v1/orders', {
-      method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Basic ${credentials}`,
+    const result = await apiCall(
+      `${pmUrl()}/api/v1/payments/initiate`,
+      {
+        method: 'POST',
+        data: {
+          orderId,
+          idempotencyKey: idempKey,
+          amount,
+          currency: 'INR',
+          providers: ['RAZORPAY'],
+          metadata: { planKey, customerEmail, source: 'web-agency-checkout' },
+        },
+        headers: pmServiceHeaders(tenantId),
       },
-      body: JSON.stringify({
-        amount,
-        currency: 'INR',
-        receipt:  `rcpt_${Date.now()}`,
-        notes:    { planKey, customerEmail },
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    );
 
-    const rzBody = await rzRes.json();
-    if (!rzRes.ok) {
-      throw new AppError(rzBody?.error?.description || 'Failed to create Razorpay order.', 502);
+    if (result.error) {
+      logger.error('payment-microservice Razorpay initiate failed', { status: result.status, msg: result.message });
+      throw new AppError(result.data?.message || 'Failed to create payment order.', result.status || 502);
     }
 
+    const pmData   = result.data?.data ?? result.data;
+    const rzOption = Array.isArray(pmData.options) ? pmData.options.find(o => o.provider === 'RAZORPAY') : null;
+
+    if (!rzOption?.orderId) {
+      throw new AppError('Payment service did not return a Razorpay order.', 502);
+    }
+
+    // Store mapping so the verify step can look up transactionId + attemptId
+    storePending(rzOption.orderId, {
+      transactionId: pmData.transactionId,
+      attemptId:     rzOption.attemptId,
+      planKey,
+      customerEmail,
+    });
+
     return res.status(201).json({
-      success:  true,
-      message:  'Razorpay order created.',
+      success: true,
+      message: 'Razorpay order created.',
       data: {
-        orderId:  rzBody.id,
-        amount:   rzBody.amount,
-        currency: rzBody.currency,
-        keyId,
+        orderId:  rzOption.orderId,
+        amount,
+        currency: 'INR',
+        keyId:    config.razorpay?.keyId,
       },
     });
   } catch (err) {
@@ -152,13 +217,15 @@ router.post('/razorpay/create-order', async (req, res, next) => {
 /**
  * POST /api/payments/razorpay/verify
  *
- * Body: { orderId, paymentId, signature, planKey, name, email, productId?, businessName?, externalId? }
+ * Delegates to payment-microservice POST /api/v1/payments/:transactionId/verify.
+ * Body:    { orderId, paymentId, signature, planKey, name, email, productId?, businessName?, externalId? }
  * Returns: { paymentVerified, loginUrl?, ... }
  */
 router.post('/razorpay/verify', async (req, res, next) => {
   try {
-    const { keySecret } = config.razorpay ?? {};
-    if (!keySecret) throw new AppError('Razorpay is not configured on this server.', 503);
+    if (!config.payment?.apiKey) {
+      throw new AppError('Payment service is not configured on this server.', 503);
+    }
 
     const { orderId, paymentId, signature, planKey, name, email, businessName, externalId } = req.body;
 
@@ -166,20 +233,40 @@ router.post('/razorpay/verify', async (req, res, next) => {
       throw new AppError('orderId, paymentId, signature, and email are required.', 400);
     }
 
-    // Verify HMAC-SHA256 signature
-    const expected = crypto
-      .createHmac('sha256', keySecret)
-      .update(`${orderId}|${paymentId}`)
-      .digest('hex');
-
-    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
-      logger.warn('Razorpay signature mismatch', { orderId, paymentId });
-      throw new AppError('Invalid payment signature.', 400);
+    const pending = getPending(orderId);
+    if (!pending) {
+      throw new AppError('Payment order not found or has expired. Please restart the checkout.', 404);
     }
 
-    const productId = resolveProductId(req.body);
+    const { transactionId, attemptId } = pending;
+    const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
 
-    await handlePostPayment(res, { productId, name, email, planKey, paymentId, businessName, externalId });
+    const result = await apiCall(
+      `${pmUrl()}/api/v1/payments/${transactionId}/verify`,
+      {
+        method: 'POST',
+        data: { attemptId, providerPaymentId: paymentId, providerSignature: signature },
+        headers: pmServiceHeaders(tenantId),
+      },
+    );
+
+    if (result.error) {
+      logger.error('payment-microservice Razorpay verify failed', { transactionId, status: result.status });
+      throw new AppError(result.data?.message || 'Payment verification failed.', result.status || 502);
+    }
+
+    pendingOrders.delete(orderId);
+
+    const productId = resolveProductId(req.body);
+    return handlePostPayment(res, {
+      productId,
+      name,
+      email,
+      planKey:      planKey || pending.planKey,
+      paymentId,
+      businessName,
+      externalId,
+    });
   } catch (err) {
     next(err);
   }
@@ -192,61 +279,76 @@ router.post('/razorpay/verify', async (req, res, next) => {
 /**
  * POST /api/payments/stripe/create-session
  *
- * Body: { planKey, customerEmail, successUrl, cancelUrl, productId? }
+ * Delegates to payment-microservice with Stripe Checkout Session mode.
+ * Body:    { planKey, customerEmail, successUrl, cancelUrl, productId? }
  * Returns: { sessionId, sessionUrl }
  */
 router.post('/stripe/create-session', async (req, res, next) => {
   try {
-    const { secretKey } = config.stripe ?? {};
-    if (!secretKey) throw new AppError('Stripe is not configured on this server.', 503);
+    if (!config.payment?.apiKey) {
+      throw new AppError('Payment service is not configured on this server.', 503);
+    }
 
-    const { planKey, customerEmail, successUrl, cancelUrl, productId: _productId } = req.body;
+    const { planKey, customerEmail, successUrl, cancelUrl } = req.body;
     if (!planKey || !customerEmail || !successUrl || !cancelUrl) {
       throw new AppError('planKey, customerEmail, successUrl, and cancelUrl are required.', 400);
     }
 
-    // Price catalog (unit_amount in cents / paise depending on currency)
-    const PLAN_PRICES = {
-      starter:  { amount: 2700, currency: 'usd', name: 'EasyDev Starter'  },
-      growth:   { amount: 6700, currency: 'usd', name: 'EasyDev Growth'   },
-      business: { amount: 17400, currency: 'usd', name: 'EasyDev Business' },
-    };
-    const price = PLAN_PRICES[planKey?.toLowerCase()];
+    const price = PLAN_CENTS[planKey?.toLowerCase()];
     if (!price) throw new AppError(`Invalid plan key: ${planKey}`, 400);
 
-    const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        'Authorization':  `Bearer ${secretKey}`,
-        'Content-Type':   'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        'payment_method_types[]':             'card',
-        'mode':                               'payment',
-        'customer_email':                     customerEmail,
-        'success_url':                        successUrl,
-        'cancel_url':                         cancelUrl,
-        'line_items[0][price_data][currency]':            price.currency,
-        'line_items[0][price_data][unit_amount]':         String(price.amount),
-        'line_items[0][price_data][product_data][name]':  price.name,
-        'line_items[0][quantity]':            '1',
-        'metadata[planKey]':                  planKey,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const orderId  = randomUUID();
+    const idempKey = randomUUID();
+    const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
 
-    const stripeBody = await stripeRes.json();
-    if (!stripeRes.ok) {
-      throw new AppError(stripeBody?.error?.message || 'Failed to create Stripe session.', 502);
+    const result = await apiCall(
+      `${pmUrl()}/api/v1/payments/initiate`,
+      {
+        method: 'POST',
+        data: {
+          orderId,
+          idempotencyKey: idempKey,
+          amount: price,
+          currency: 'USD',
+          providers: ['STRIPE'],
+          metadata: {
+            checkoutMode: true,
+            successUrl,
+            cancelUrl,
+            customerEmail,
+            productName: `EasyDev ${planKey.charAt(0).toUpperCase() + planKey.slice(1)} Plan`,
+            planKey,
+            source: 'web-agency-checkout',
+          },
+        },
+        headers: pmServiceHeaders(tenantId),
+      },
+    );
+
+    if (result.error) {
+      logger.error('payment-microservice Stripe initiate failed', { status: result.status, msg: result.message });
+      throw new AppError(result.data?.message || 'Failed to create Stripe session.', result.status || 502);
     }
+
+    const pmData       = result.data?.data ?? result.data;
+    const stripeOption = Array.isArray(pmData.options) ? pmData.options.find(o => o.provider === 'STRIPE') : null;
+
+    if (!stripeOption?.sessionUrl) {
+      throw new AppError('Payment service did not return a Stripe session URL.', 502);
+    }
+
+    // stripeOption.orderId is the Stripe session ID (cs_...)
+    storePending(stripeOption.orderId, {
+      transactionId: pmData.transactionId,
+      attemptId:     stripeOption.attemptId,
+      planKey,
+      customerEmail,
+    });
 
     return res.status(201).json({
       success: true,
       message: 'Stripe checkout session created.',
-      data: {
-        sessionId:  stripeBody.id,
-        sessionUrl: stripeBody.url,
-      },
+      data: { sessionId: stripeOption.orderId, sessionUrl: stripeOption.sessionUrl },
     });
   } catch (err) {
     next(err);
@@ -257,40 +359,47 @@ router.post('/stripe/create-session', async (req, res, next) => {
  * GET /api/payments/stripe/verify-session?sessionId=cs_xxx&planKey=growth&name=...&email=...
  *
  * Called after Stripe redirects back to the success URL.
- * Verifies the session is paid, then provisions the product.
+ * Delegates verification to payment-microservice then provisions the product.
  */
 router.get('/stripe/verify-session', async (req, res, next) => {
   try {
-    const { secretKey } = config.stripe ?? {};
-    if (!secretKey) throw new AppError('Stripe is not configured on this server.', 503);
+    if (!config.payment?.apiKey) {
+      throw new AppError('Payment service is not configured on this server.', 503);
+    }
 
-    const { sessionId, planKey, name, email, businessName, externalId, productId: queryProductId } = req.query;
+    const { sessionId, planKey, name, email, businessName, externalId, productId: qProductId } = req.query;
     if (!sessionId || !email) throw new AppError('sessionId and email are required.', 400);
 
-    // Fetch session from Stripe
-    const stripeRes = await fetch(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`, {
-      headers: { Authorization: `Bearer ${secretKey}` },
-      signal:  AbortSignal.timeout(15_000),
-    });
-    const session = await stripeRes.json();
-
-    if (!stripeRes.ok) {
-      throw new AppError(session?.error?.message || 'Failed to retrieve Stripe session.', 502);
+    const pending = getPending(sessionId);
+    if (!pending) {
+      throw new AppError('Session not found or has expired. Please restart the checkout.', 404);
     }
 
-    if (session.payment_status !== 'paid') {
-      throw new AppError(`Payment not completed. Status: ${session.payment_status}`, 402);
+    const { transactionId, attemptId } = pending;
+    const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
+
+    const result = await apiCall(
+      `${pmUrl()}/api/v1/payments/${transactionId}/verify`,
+      {
+        method: 'POST',
+        data: { attemptId, providerPaymentId: sessionId },
+        headers: pmServiceHeaders(tenantId),
+      },
+    );
+
+    if (result.error) {
+      logger.error('payment-microservice Stripe verify failed', { transactionId, status: result.status });
+      throw new AppError(result.data?.message || 'Failed to verify Stripe session.', result.status || 502);
     }
 
-    const resolvedPlanKey = planKey || session.metadata?.planKey || 'growth';
-    const resolvedProductId = queryProductId || resolveProductId({});
+    pendingOrders.delete(sessionId);
 
-    await handlePostPayment(res, {
-      productId:    resolvedProductId,
-      name:         name || session.customer_details?.name || email,
-      email:        email || session.customer_email,
-      planKey:      resolvedPlanKey,
-      paymentId:    session.payment_intent || sessionId,
+    return handlePostPayment(res, {
+      productId:    qProductId || resolveProductId({}),
+      name:         name || email,
+      email:        String(email),
+      planKey:      planKey || pending.planKey || 'growth',
+      paymentId:    String(sessionId),
       businessName: businessName,
       externalId:   externalId,
     });
@@ -300,52 +409,32 @@ router.get('/stripe/verify-session', async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WEBHOOKS  (server-to-server, signed)
+// WEBHOOKS — raw body forwarded to payment-microservice
+// HMAC verification is owned by payment-microservice; no re-verification here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * POST /api/payments/webhooks/razorpay
- *
- * Razorpay sends payment.captured events here.
- * Must be registered in the Razorpay dashboard under Webhooks.
- * Raw body required for HMAC verification — parsed separately below.
+ * Forwards the signed raw payload to payment-microservice for verification + processing.
  */
 router.post('/webhooks/razorpay', express.raw({ type: 'application/json' }), async (req, res) => {
-  const webhookSecret = config.razorpay?.webhookSecret;
-  if (!webhookSecret) {
-    logger.warn('Razorpay webhook received but RAZORPAY_WEBHOOK_SECRET not set — ignoring');
+  if (!config.payment?.serviceUrl) {
+    logger.warn('Razorpay webhook received but PAYMENT_SERVICE_URL not set — ignoring');
     return res.sendStatus(200);
   }
 
-  const signature = req.headers['x-razorpay-signature'];
-  const expected  = crypto.createHmac('sha256', webhookSecret).update(req.body).digest('hex');
-
-  if (!signature || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
-    logger.warn('Razorpay webhook signature mismatch — request rejected');
-    return res.status(400).json({ success: false, message: 'Invalid webhook signature.' });
-  }
-
-  let event;
   try {
-    event = JSON.parse(req.body.toString());
-  } catch {
-    return res.status(400).json({ success: false, message: 'Invalid JSON body.' });
-  }
-
-  if (event.event === 'payment.captured') {
-    const payment  = event.payload?.payment?.entity ?? {};
-    const notes    = payment.notes ?? {};
-    const planKey  = notes.planKey   || 'growth';
-    const email    = notes.customerEmail || payment.email;
-
-    if (email) {
-      provision(resolveProductId(notes), {
-        name:      notes.name || email,
-        email,
-        planKey,
-        paymentId: payment.id,
-      }).catch(err => logger.error('Webhook provisioning failed', { error: err.message, paymentId: payment.id }));
-    }
+    await fetch(`${pmUrl()}/api/v1/webhooks/razorpay`, {
+      method:  'POST',
+      headers: {
+        'content-type':         'application/json',
+        'x-razorpay-signature': req.headers['x-razorpay-signature'] || '',
+      },
+      body:   req.body,
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    logger.error('Razorpay webhook forwarding error', { error: err.message });
   }
 
   res.sendStatus(200);
@@ -353,67 +442,139 @@ router.post('/webhooks/razorpay', express.raw({ type: 'application/json' }), asy
 
 /**
  * POST /api/payments/webhooks/stripe
- *
- * Stripe sends checkout.session.completed events here.
- * Must be registered in the Stripe dashboard under Webhooks → Add endpoint.
+ * Forwards the signed raw payload to payment-microservice for verification + processing.
  */
 router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
-  const webhookSecret = config.stripe?.webhookSecret;
-  if (!webhookSecret) {
-    logger.warn('Stripe webhook received but STRIPE_WEBHOOK_SECRET not set — ignoring');
+  if (!config.payment?.serviceUrl) {
+    logger.warn('Stripe webhook received but PAYMENT_SERVICE_URL not set — ignoring');
     return res.sendStatus(200);
   }
 
-  const sig = req.headers['stripe-signature'];
-  let event;
-
   try {
-    // Manual Stripe signature verification (avoids Stripe SDK dependency)
-    const payload   = req.body.toString();
-    const parts     = String(sig).split(',').reduce((acc, p) => {
-      const [k, v] = p.split('=');
-      acc[k] = v;
-      return acc;
-    }, {});
-    const timestamp = parts.t;
-    const sigV1     = parts.v1;
-
-    const expected = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(`${timestamp}.${payload}`)
-      .digest('hex');
-
-    if (!sigV1 || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sigV1))) {
-      logger.warn('Stripe webhook signature mismatch');
-      return res.status(400).json({ success: false, message: 'Invalid webhook signature.' });
-    }
-
-    event = JSON.parse(payload);
+    await fetch(`${pmUrl()}/api/v1/webhooks/stripe`, {
+      method:  'POST',
+      headers: {
+        'content-type':    'application/json',
+        'stripe-signature': req.headers['stripe-signature'] || '',
+      },
+      body:   req.body,
+      signal: AbortSignal.timeout(15_000),
+    });
   } catch (err) {
-    return res.status(400).json({ success: false, message: 'Webhook verification failed.' });
-  }
-
-  if (event.type === 'checkout.session.completed') {
-    const session = event.data?.object ?? {};
-    if (session.payment_status === 'paid') {
-      const planKey = session.metadata?.planKey || 'growth';
-      const email   = session.customer_email;
-
-      if (email) {
-        provision(resolveProductId(session.metadata ?? {}), {
-          name:      session.customer_details?.name || email,
-          email,
-          planKey,
-          paymentId: session.payment_intent || session.id,
-        }).catch(err => logger.error('Stripe webhook provisioning failed', {
-          error: err.message,
-          sessionId: session.id,
-        }));
-      }
-    }
+    logger.error('Stripe webhook forwarding error', { error: err.message });
   }
 
   res.sendStatus(200);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN — authenticated staff only
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/payments/admin/stats
+ *
+ * Revenue, transaction counts, subscription and refund totals.
+ * Proxied from payment-microservice GET /api/v1/admin/dashboard.
+ */
+router.get(
+  '/admin/stats',
+  authenticate,
+  authorize('admin', 'super_admin', 'finance', 'support'),
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/admin/dashboard`,
+        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
+      );
+
+      if (result.error) {
+        logger.error('payment admin stats failed', { status: result.status });
+        throw new AppError(result.data?.message || 'Failed to fetch payment statistics.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment statistics retrieved.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /api/payments/admin/transactions
+ *
+ * Paginated transaction list.
+ * Supports: ?page, ?limit, ?status, ?customerId, ?currency
+ */
+router.get(
+  '/admin/transactions',
+  authenticate,
+  authorize('admin', 'super_admin', 'finance', 'support'),
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+
+      const qs     = new URLSearchParams(req.query).toString();
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/admin/transactions${qs ? `?${qs}` : ''}`,
+        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
+      );
+
+      if (result.error) {
+        logger.error('payment admin transactions failed', { status: result.status });
+        throw new AppError(result.data?.message || 'Failed to fetch transactions.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Transactions retrieved.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /api/payments/admin/subscriptions
+ *
+ * Paginated subscription list from payment-microservice.
+ */
+router.get(
+  '/admin/subscriptions',
+  authenticate,
+  authorize('admin', 'super_admin', 'finance', 'support'),
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+
+      const qs     = new URLSearchParams(req.query).toString();
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/admin/subscriptions${qs ? `?${qs}` : ''}`,
+        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
+      );
+
+      if (result.error) {
+        logger.error('payment admin subscriptions failed', { status: result.status });
+        throw new AppError(result.data?.message || 'Failed to fetch subscriptions.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Subscriptions retrieved.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 export default router;

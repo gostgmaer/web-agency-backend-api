@@ -90,17 +90,18 @@ router.post('/provision', async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/communication/launch
+// GET /api/communication/launch?slug=easydev-communication
+// GET /api/communication/launch?applicationId=<uuid-or-publicId>
 //
 // Generates a short-lived (5 min) SSO token via the IAM service and returns
-// a signed launch URL to the AI Communication frontend.
+// a signed launch URL to the product's frontend.
 //
-// The EasyDev customer dashboard calls this endpoint when the customer clicks
-// "Open App". The browser is then redirected to:
-//   <COMMUNICATION_FRONTEND_URL>/sso?token=<ssoToken>&appId=<applicationId>
+// Caller must supply exactly one of:
+//   ?slug=<kebab-slug>          preferred — stable, no UUID needed
+//   ?applicationId=<id>         fallback  — UUID or publicId from IAM app table
 //
-// The AI comm frontend exchanges the SSO token for a session (3-day cookie),
-// so subsequent visits are auto-logged in.
+// The product's frontendUrl is stored on its IAM application record and is
+// returned by SSO /generate — no env var required here.
 //
 // Auth strategy:
 //   The EasyDev customer is authenticated against the same IAM service
@@ -114,24 +115,30 @@ router.post('/provision', async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/launch', authenticate, authorize('member'), async (req, res, next) => {
   try {
+    const { slug, applicationId } = req.query;
+
+    if (!slug && !applicationId) {
+      return next(new AppError('Provide either ?slug= or ?applicationId= to identify the application.', 400));
+    }
+    if (slug && applicationId) {
+      return next(new AppError('Provide only one of ?slug= or ?applicationId=, not both.', 400));
+    }
+
+    // Sanitise — both must be non-empty strings
+    const resolvedSlug = typeof slug === 'string' && slug.trim() ? slug.trim() : undefined;
+    const resolvedAppId = typeof applicationId === 'string' && applicationId.trim() ? applicationId.trim() : undefined;
+
     const iamCfg = config.iam;
 
-    if (!iamCfg.applicationId) {
-      throw new AppError('SSO launch is not configured (IAM_APPLICATION_ID missing).', 503);
-    }
-    if (!iamCfg.commFrontendUrl) {
-      throw new AppError('SSO launch is not configured (COMMUNICATION_FRONTEND_URL missing).', 503);
-    }
-
     // Forward the customer's own IAM JWT directly to the IAM SSO generate endpoint.
-    // IAM uses @CurrentUser('userId') to resolve the caller from the JWT payload.
     const customerJwt = req.headers.authorization; // "Bearer <iam_access_token>"
 
     const iamRes = await axios.post(
       `${iamCfg.serviceUrl}/api/v1/iam/sso/generate`,
       {
-        applicationId: iamCfg.applicationId,
-        ...(iamCfg.tenantId ? { tenantId: iamCfg.tenantId } : {}),
+        ...(resolvedSlug       ? { slug: resolvedSlug }             : {}),
+        ...(resolvedAppId      ? { applicationId: resolvedAppId }   : {}),
+        ...(config.tenant.defaultTenantId ? { tenantId: config.tenant.defaultTenantId } : {}),
       },
       {
         headers: {
@@ -142,12 +149,21 @@ router.get('/launch', authenticate, authorize('member'), async (req, res, next) 
       },
     );
 
-    const { token, expiresIn } = iamRes.data?.data ?? iamRes.data;
+    const { token, expiresIn, frontendUrl } = iamRes.data?.data ?? iamRes.data;
     if (!token) throw new AppError('IAM did not return an SSO token.', 502);
 
-    const launchUrl = `${iamCfg.commFrontendUrl}/sso?token=${encodeURIComponent(token)}&appId=${encodeURIComponent(iamCfg.applicationId)}`;
+    // frontendUrl is stored on the IAM application record — not in env.
+    if (!frontendUrl) {
+      const identifier = resolvedSlug ?? resolvedAppId;
+      throw new AppError(`SSO launch misconfigured — set frontendUrl on the '${identifier}' application record in IAM.`, 503);
+    }
 
-    logger.info('SSO launch URL generated', { userId: req.user.id, applicationId: iamCfg.applicationId });
+    const appParam = resolvedSlug
+      ? `slug=${encodeURIComponent(resolvedSlug)}`
+      : `appId=${encodeURIComponent(resolvedAppId!)}`;
+    const launchUrl = `${frontendUrl}/sso?token=${encodeURIComponent(token)}&${appParam}`;
+
+    logger.info('SSO launch URL generated', { userId: req.user.id, slug: resolvedSlug, applicationId: resolvedAppId });
 
     return res.json({
       success: true,
