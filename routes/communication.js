@@ -160,7 +160,7 @@ router.get('/launch', authenticate, authorize('member'), async (req, res, next) 
 
     const appParam = resolvedSlug
       ? `slug=${encodeURIComponent(resolvedSlug)}`
-      : `appId=${encodeURIComponent(resolvedAppId!)}`;
+      : `appId=${encodeURIComponent(resolvedAppId)}`;
     const launchUrl = `${frontendUrl}/sso?token=${encodeURIComponent(token)}&${appParam}`;
 
     logger.info('SSO launch URL generated', { userId: req.user.id, slug: resolvedSlug, applicationId: resolvedAppId });

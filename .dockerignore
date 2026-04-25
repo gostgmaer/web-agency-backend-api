@@ -8,4 +8,4 @@ uploads
 Dockerfile*
 docker-compose*.yml
 .github
-node_modules/.pnpm
+node_modules
