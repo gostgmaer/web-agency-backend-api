@@ -20,36 +20,71 @@ import { config } from '../config/index.js';
 import logger from './logger.js';
 import { AppError } from './errors.js';
 import { sendAdminCreatedUser, sendProductAccessGranted } from './email.js';
+import { provisionSharedIamUser } from './iamProvisioner.js';
 
-// ─── IAM email existence check ────────────────────────────────────────────────
+function getProductIamProvisioning(productConfig) {
+  if (!productConfig?.iamProvisioning) return null;
 
-/**
- * Returns true if the given email is already registered in the IAM service.
- * Used to distinguish "new user" (send credentials email) from
- * "existing user buying a product" (send access email only).
- */
-async function _checkIamUserExists(email) {
-  const iamUrl = config.auth?.serviceUrl || config.iam?.serviceUrl;
-  if (!iamUrl) return false;
+  const iamProvisioning = productConfig.iamProvisioning;
+  if (iamProvisioning.provider !== 'shared-iam') return null;
+
+  return {
+    provider: iamProvisioning.provider,
+    applicationSlug: iamProvisioning.applicationSlug || null,
+    tenantSlug: iamProvisioning.tenantSlug || null,
+    defaultRole: iamProvisioning.defaultRole || 'member',
+    bootstrapUser: iamProvisioning.bootstrapUser !== false,
+    requirePasswordChangeOnFirstLogin: iamProvisioning.requirePasswordChangeOnFirstLogin !== false,
+  };
+}
+
+async function _linkCommunicationIamUser(productCfg, { businessId, iamUserId }) {
+  const url = `${productCfg.provisionUrl}/onboarding/link-iam-user`;
+
+  let response;
   try {
-    const res = await fetch(
-      `${iamUrl}/api/v1/iam/users?search=${encodeURIComponent(email)}&limit=1`,
-      {
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(5_000),
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Api-Key': productCfg.apiKey,
       },
-    );
-    if (!res.ok) return false;
-    const body = await res.json();
-    const users = body?.data ?? [];
-    // Exact email match — search is fuzzy so compare explicitly
-    return Array.isArray(users) && users.some(
-      (u) => u.email?.toLowerCase() === email.toLowerCase(),
-    );
-  } catch {
-    // If IAM is unreachable, treat as unknown — don't block the purchase
-    return false;
+      body: JSON.stringify({ businessId, iamUserId }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (networkErr) {
+    logger.error('Communication backend unreachable during IAM link', {
+      url,
+      businessId,
+      iamUserId,
+      message: networkErr.message,
+    });
+    throw new Error('AI Communication account was created, but IAM linking failed. Please contact support.');
   }
+
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+
+  if (!response.ok) {
+    const message =
+      body?.message ||
+      (Array.isArray(body?.errors) ? body.errors.map((entry) => entry.message).join(', ') : null) ||
+      `IAM link failed with status ${response.status}`;
+
+    logger.error('Communication IAM link returned non-OK status', {
+      status: response.status,
+      businessId,
+      iamUserId,
+      message,
+    });
+    throw new Error(message);
+  }
+
+  return body?.data ?? body;
 }
 
 // ─── Public entry point ────────────────────────────────────────────────────────
@@ -57,9 +92,9 @@ async function _checkIamUserExists(email) {
 /**
  * Provision a product account after a successful payment.
  *
- * Common concerns shared by ALL products are handled here:
- *   1. IAM email check  → determines whether to send the new-user credentials email
- *   2. sendAdminCreatedUser  → only for brand-new users (not already in IAM)
+ * Common concerns shared by ALL shared-IAM products are handled here:
+ *   1. Central IAM provisioning (create / reuse user, grant app access, assign role)
+ *   2. sendAdminCreatedUser  → only for brand-new IAM users
  *   3. sendProductAccessGranted → always sent after successful provisioning
  *
  * Each product-specific provisioner (_provision*) is responsible only for:
@@ -70,7 +105,8 @@ async function _checkIamUserExists(email) {
  *
  * Adding a new product:
  *   1. Add its config block to config/index.js → products (with name, description, features, planMap)
- *   2. Add a new case to the switch below
+ *   2. If it uses the central IAM platform, add an iamProvisioning block there.
+ *   3. Add a new case to the switch below
  *   3. Implement _provision<ProductName>() that returns the normalised shape above
  *   — The IAM check and email logic below apply automatically.
  *
@@ -91,13 +127,9 @@ export async function provision(productId, data) {
     paymentId: data.paymentId,
   });
 
-  // ── Step 1: IAM pre-flight ────────────────────────────────────────────────
-  // Applies to every product. If the email already exists in IAM the user has
-  // login credentials — we skip the new-user credentials email later.
-  const existingIamUser = await _checkIamUserExists(data.email);
-  logger.info('IAM user existence check', { email: data.email, existingIamUser, productId });
+  const productIamProvisioning = getProductIamProvisioning(productConfig);
 
-  // ── Step 2: Product-specific provisioning ─────────────────────────────────
+  // ── Step 1: Product-specific local provisioning ───────────────────────────
   let result;
 
   switch (productConfig.provisionType) {
@@ -114,13 +146,45 @@ export async function provision(productId, data) {
       throw new Error(`Unknown provisionType "${productConfig.provisionType}" for product "${productId}".`);
   }
 
+  // ── Step 2: Shared IAM provisioning + product link ───────────────────────
+  let iamProvisionResult = null;
+  if (productIamProvisioning) {
+    iamProvisionResult = await provisionSharedIamUser({
+      productId,
+      productName: productConfig.name,
+      iamProvisioning: productIamProvisioning,
+      customer: {
+        name: data.name,
+        email: data.email,
+        businessName: data.businessName || data.name,
+      },
+    });
+
+    switch (productConfig.provisionType) {
+      case 'easydev-communication':
+        await _linkCommunicationIamUser(productConfig, {
+          businessId: result.businessId,
+          iamUserId: iamProvisionResult.iamUserId,
+        });
+        break;
+      default:
+        throw new Error(`IAM linking is not implemented for provisionType "${productConfig.provisionType}".`);
+    }
+
+    result = {
+      ...result,
+      iamUserId: iamProvisionResult.iamUserId,
+      ...(iamProvisionResult.temporaryPassword ? { temporaryPassword: iamProvisionResult.temporaryPassword } : {}),
+    };
+  }
+
   // ── Step 3: Post-provision emails (all products) ──────────────────────────
-  // Only send credentials email for brand-new users (not already in IAM).
-  if (!existingIamUser && result.temporaryPassword) {
+  // Only send credentials email for brand-new IAM users.
+  if (productIamProvisioning && iamProvisionResult?.isNewUser && iamProvisionResult.temporaryPassword) {
     sendAdminCreatedUser({
       username:          data.name,
       email:             data.email,
-      temporaryPassword: result.temporaryPassword,
+      temporaryPassword: iamProvisionResult.temporaryPassword,
       loginUrl:          result.loginUrl,
     }).catch(() => {});
   }
@@ -147,9 +211,11 @@ export async function provision(productId, data) {
  * Provision an EasyDev Communication AI account.
  *
  * Calls POST /onboarding/create-account on the AI Communication NestJS backend.
+ * This step creates ONLY the local product records. Shared IAM provisioning is
+ * handled afterwards by web-agency-backend-api and linked back to the product.
  *
  * Returns the normalised shape expected by provision():
- *   { success: true, loginUrl, userId, businessId, temporaryPassword, planType }
+ *   { success: true, loginUrl, userId, businessId, planType }
  *
  * @param {object} productCfg - config.products['easydev-communication']
  * @param {object} data       - { name, email, planKey, paymentId?, businessName?, externalId? }
@@ -243,7 +309,6 @@ async function _provisionCommunication(productCfg, data) {
     loginUrl:          raw.loginUrl,
     userId:            raw.userId,
     businessId:        raw.businessId,
-    temporaryPassword: raw.temporaryPassword,
     planType:          communicationPlan,
   };
 }

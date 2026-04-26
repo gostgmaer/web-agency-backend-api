@@ -48,6 +48,9 @@ export const config = {
 	// No per-product APP_ID env vars — the key in config.products IS the IAM slug.
 	iam: {
 		serviceUrl: process.env.AUTH_SERVICE_URL || 'http://localhost:3100',
+		adminEmail: process.env.IAM_ADMIN_EMAIL || '',
+		adminPassword: process.env.IAM_ADMIN_PASSWORD || '',
+		adminJwt: process.env.IAM_ADMIN_JWT || '',
 	},
 
 	// ─── AI Communication Service ─────────────────────────────────────────────
@@ -98,6 +101,14 @@ export const config = {
 	//   "easydev-communication" — calls POST /onboarding/create-account on the
 	//                             AI Communication NestJS backend.
 	//
+	// Optional per-product iamProvisioning block:
+	//   provider                         — 'shared-iam' when the product reuses the central IAM platform
+	//   applicationSlug                  — IAM application slug for SSO/app grants
+	//   tenantSlug                       — IAM tenant slug for role membership
+	//   defaultRole                      — role assigned after purchase
+	//   bootstrapUser                    — whether purchased users are marked as bootstrap users
+	//   requirePasswordChangeOnFirstLogin — whether the temporary password must be changed on first login
+	//
 	// Add further products by adding more keys. The product ID is passed in the
 	// checkout request as { productId: "easydev-communication" } and matched here.
 	products: {
@@ -115,6 +126,14 @@ export const config = {
 				'Analytics dashboard',
 				'Priority support',
 			],
+			iamProvisioning: {
+				provider: 'shared-iam',
+				applicationSlug: process.env.COMMUNICATION_IAM_APPLICATION_SLUG || 'easydev-ai-communication',
+				tenantSlug: process.env.COMMUNICATION_IAM_TENANT_SLUG || process.env.IAM_TENANT_SLUG || 'easydev',
+				defaultRole: process.env.COMMUNICATION_IAM_DEFAULT_ROLE || 'member',
+				bootstrapUser: true,
+				requirePasswordChangeOnFirstLogin: true,
+			},
 			// EasyDev plan key → Communication platform plan enum
 			planMap: {
 				starter:  'pro',
@@ -129,6 +148,14 @@ export const config = {
 		//   provisionType: 'generic-webhook',
 		//   apiUrl: process.env.ANALYTICS_API_URL,
 		//   apiKey: process.env.ANALYTICS_API_KEY,
+		//   iamProvisioning: {
+		//     provider: 'shared-iam',
+		//     applicationSlug: process.env.ANALYTICS_IAM_APPLICATION_SLUG,
+		//     tenantSlug: process.env.ANALYTICS_IAM_TENANT_SLUG || process.env.IAM_TENANT_SLUG,
+		//     defaultRole: process.env.ANALYTICS_IAM_DEFAULT_ROLE || 'member',
+		//     bootstrapUser: true,
+		//     requirePasswordChangeOnFirstLogin: true,
+		//   },
 		// },
 	},
 

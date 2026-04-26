@@ -38,19 +38,34 @@ const router = express.Router();
 
 // ─── Plan price catalog ───────────────────────────────────────────────────────
 
-/** Razorpay amounts in paise (INR smallest unit). */
-const PLAN_PAISE = {
-  starter:  199900,   // ₹1,999
-  growth:   499900,   // ₹4,999
-  business: 1299900,  // ₹12,999
+const BILLING_PLANS = {
+  starter: {
+    planId: 'plan_easydev_starter_inr_monthly',
+    productName: 'EasyDev Starter Plan',
+    trialDays: 3,
+    interval: 'month',
+    intervalCount: 1,
+    INR: 199900,
+  },
+  growth: {
+    planId: 'plan_easydev_growth_inr_monthly',
+    productName: 'EasyDev Growth Plan',
+    trialDays: 3,
+    interval: 'month',
+    intervalCount: 1,
+    INR: 499900,
+  },
+  business: {
+    planId: 'plan_easydev_business_inr_monthly',
+    productName: 'EasyDev Business Plan',
+    trialDays: 3,
+    interval: 'month',
+    intervalCount: 1,
+    INR: 1299900,
+  },
 };
 
-/** Stripe amounts in cents (USD smallest unit). */
-const PLAN_CENTS = {
-  starter:  2700,   // $27
-  growth:   6700,   // $67
-  business: 17400,  // $174
-};
+const PUBLIC_CHECKOUT_PROVIDERS = ['RAZORPAY', 'CASH'];
 
 // ─── Pending order store ──────────────────────────────────────────────────────
 // Maps provider orderId / sessionId → { transactionId, attemptId, planKey, customerEmail }
@@ -82,12 +97,14 @@ function getPending(key) {
 const pmUrl = () => config.payment?.serviceUrl || 'http://localhost:3000';
 
 /** Service-to-service headers for payment-microservice (API key auth). */
-function pmServiceHeaders(tenantId) {
-  return {
+function pmServiceHeaders(tenantId, userId) {
+  const headers = {
     'x-api-key':    config.payment?.apiKey || '',
     'x-tenant-id':  tenantId || config.tenantId || 'easydev',
     'Content-Type': 'application/json',
   };
+  if (userId) headers['x-user-id'] = userId;
+  return headers;
 }
 
 /** User JWT passthrough headers for admin calls to payment-microservice. */
@@ -104,6 +121,18 @@ function resolveProductId(body) {
     throw new AppError('productId is required. Pass the product you are purchasing.', 400);
   }
   return body.productId;
+}
+
+function getBillingPlan(planKey) {
+  const plan = BILLING_PLANS[planKey?.toLowerCase()];
+  if (!plan) {
+    throw new AppError(`Invalid plan key: ${planKey}`, 400);
+  }
+  return plan;
+}
+
+function buildCheckoutCustomerId(email) {
+  return `checkout:${String(email).trim().toLowerCase()}`;
 }
 
 /** Shared post-payment provisioning: provision the product account and respond. */
@@ -154,13 +183,10 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
  * POST /api/payments/initiate
  *
  * Starts a payment with any enabled provider.
- * Body:    { provider, planKey, customerEmail, successUrl?, cancelUrl? }
- *          provider    — 'RAZORPAY' | 'STRIPE' | 'CASH' (value from GET /methods)
- *          successUrl  — required for STRIPE only
- *          cancelUrl   — required for STRIPE only
+ * Body:    { provider, planKey, customerEmail }
+ *          provider    — 'RAZORPAY' | 'CASH' (value from GET /methods)
  * Returns: provider-specific data:
  *          RAZORPAY → { provider, orderId, amount, currency, keyId }
- *          STRIPE   → { provider, sessionId, sessionUrl }
  *          CASH     → { provider, referenceCode, transactionId, attemptId, amount, currency }
  */
 router.post('/initiate', async (req, res, next) => {
@@ -169,72 +195,24 @@ router.post('/initiate', async (req, res, next) => {
       throw new AppError('Payment service is not configured on this server.', 503);
     }
 
-    const { provider, planKey, customerEmail, successUrl, cancelUrl } = req.body;
+    const { provider, planKey, customerEmail } = req.body;
     if (!provider || !planKey || !customerEmail) {
       throw new AppError('provider, planKey, and customerEmail are required.', 400);
     }
 
     const p        = provider.toUpperCase();
+    const plan     = getBillingPlan(planKey);
     const orderId  = randomUUID();
     const idempKey = randomUUID();
     const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
+    const customerId = buildCheckoutCustomerId(customerEmail);
 
-    // ── STRIPE ──
-    if (p === 'STRIPE') {
-      if (!successUrl || !cancelUrl) {
-        throw new AppError('successUrl and cancelUrl are required for Stripe.', 400);
-      }
-      const price = PLAN_CENTS[planKey?.toLowerCase()];
-      if (!price) throw new AppError(`Invalid plan key: ${planKey}`, 400);
-
-      const result = await apiCall(`${pmUrl()}/api/v1/payments/initiate`, {
-        method: 'POST',
-        data: {
-          orderId,
-          idempotencyKey: idempKey,
-          amount: price,
-          currency: 'USD',
-          providers: ['STRIPE'],
-          metadata: {
-            checkoutMode: true,
-            successUrl,
-            cancelUrl,
-            customerEmail,
-            productName: `EasyDev ${planKey.charAt(0).toUpperCase() + planKey.slice(1)} Plan`,
-            planKey,
-            source: 'web-agency-checkout',
-          },
-        },
-        headers: pmServiceHeaders(tenantId),
-      });
-
-      if (result.error) {
-        logger.error('payment-microservice Stripe initiate failed', { status: result.status });
-        throw new AppError(result.data?.message || 'Failed to create Stripe session.', result.status || 502);
-      }
-
-      const pmData       = result.data?.data ?? result.data;
-      const stripeOption = Array.isArray(pmData.options) ? pmData.options.find(o => o.provider === 'STRIPE') : null;
-      if (!stripeOption?.sessionUrl) {
-        throw new AppError('Payment service did not return a Stripe session URL.', 502);
-      }
-
-      storePending(stripeOption.orderId, {
-        transactionId: pmData.transactionId,
-        attemptId:     stripeOption.attemptId,
-        planKey,
-        customerEmail,
-      });
-
-      return res.status(201).json({
-        success: true,
-        message: 'Stripe checkout session created.',
-        data: { provider: 'STRIPE', sessionId: stripeOption.orderId, sessionUrl: stripeOption.sessionUrl },
-      });
+    if (!PUBLIC_CHECKOUT_PROVIDERS.includes(p)) {
+      throw new AppError(`${p} is not available for public checkout.`, 400);
     }
 
-    // ── RAZORPAY / CASH (and any future INR provider) ──
-    const amount = PLAN_PAISE[planKey?.toLowerCase()] ?? 499900;
+    // ── Public checkout uses INR providers only ──
+    const amount = plan.INR;
 
     const result = await apiCall(`${pmUrl()}/api/v1/payments/initiate`, {
       method: 'POST',
@@ -244,9 +222,20 @@ router.post('/initiate', async (req, res, next) => {
         amount,
         currency: 'INR',
         providers: [p],
-        metadata: { planKey, customerEmail, source: 'web-agency-checkout' },
+        metadata: {
+          recurringMode: p === 'RAZORPAY',
+          tenantId,
+          planKey,
+          planId: plan.planId,
+          customerEmail,
+          productName: plan.productName,
+          trialDays: plan.trialDays,
+          interval: plan.interval,
+          intervalCount: plan.intervalCount,
+          source: 'web-agency-checkout',
+        },
       },
-      headers: pmServiceHeaders(tenantId),
+      headers: pmServiceHeaders(tenantId, customerId),
     });
 
     if (result.error) {
@@ -266,6 +255,7 @@ router.post('/initiate', async (req, res, next) => {
       attemptId:     option.attemptId,
       planKey,
       customerEmail,
+      customerId,
     });
 
     if (p === 'RAZORPAY') {
@@ -277,19 +267,22 @@ router.post('/initiate', async (req, res, next) => {
       });
     }
 
-    // CASH (and any future offline provider)
-    return res.status(201).json({
-      success: true,
-      message: `${p} order created.`,
-      data: {
-        provider: p,
-        referenceCode: option.orderId || refKey,
-        transactionId: pmData.transactionId,
-        attemptId:     option.attemptId,
-        amount,
-        currency: 'INR',
-      },
-    });
+    if (p === 'CASH') {
+      return res.status(201).json({
+        success: true,
+        message: 'Cash order created.',
+        data: {
+          provider: 'CASH',
+          referenceCode: option.orderId || refKey,
+          transactionId: pmData.transactionId,
+          attemptId: option.attemptId,
+          amount,
+          currency: 'INR',
+        },
+      });
+    }
+
+    throw new AppError(`Unsupported provider returned from payment service: ${p}`, 502);
   } catch (err) {
     next(err);
   }
@@ -300,7 +293,7 @@ router.post('/initiate', async (req, res, next) => {
  *
  * Verifies a payment with any provider, then provisions the product account.
  * Body (all providers): { provider, token, planKey, name, email, businessName?, externalId? }
- *   token     — orderId (RAZORPAY) | sessionId (STRIPE) | referenceCode (CASH)
+ *   token     — orderId or subscriptionId (RAZORPAY) | referenceCode (CASH)
  *   RAZORPAY also requires: { paymentId, signature }
  * Returns: { paymentVerified, loginUrl?, ... }
  */
@@ -331,11 +324,11 @@ router.post('/verify', async (req, res, next) => {
     // Build provider-specific verify payload
     const verifyData = p === 'RAZORPAY'
       ? { attemptId, providerPaymentId: paymentId, providerSignature: signature }
-      : { attemptId, providerPaymentId: token };  // STRIPE: token = sessionId; CASH: token = referenceCode
+      : { attemptId, providerPaymentId: token };
 
     const result = await apiCall(
       `${pmUrl()}/api/v1/payments/${transactionId}/verify`,
-      { method: 'POST', data: verifyData, headers: pmServiceHeaders(tenantId) },
+      { method: 'POST', data: verifyData, headers: pmServiceHeaders(tenantId, pending.customerId) },
     );
 
     if (result.error) {
@@ -429,7 +422,7 @@ router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async
  * The EasyDev frontend calls this on checkout mount and renders ONLY the
  * options that come back — it never hardcodes which gateways are available.
  *
- * Response: { success: true, data: { methods: ['RAZORPAY','STRIPE'], count: 2 } }
+ * Response: { success: true, data: { methods: ['RAZORPAY', 'CASH'], count: 2 } }
  *
  * Falls back gracefully when payment-microservice is unreachable:
  *   - Returns an empty methods array so the frontend can show a helpful error.
@@ -456,7 +449,10 @@ router.get('/methods', async (req, res, next) => {
     }
 
     const data = result.data?.data ?? result.data;
-    return res.status(200).json({ success: true, data });
+    const methods = Array.isArray(data?.methods)
+      ? data.methods.filter((method) => PUBLIC_CHECKOUT_PROVIDERS.includes(String(method).toUpperCase()))
+      : [];
+    return res.status(200).json({ success: true, data: { methods, count: methods.length } });
   } catch (err) {
     next(err);
   }
