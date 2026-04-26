@@ -18,16 +18,65 @@
 
 import { config } from '../config/index.js';
 import logger from './logger.js';
+import { AppError } from './errors.js';
 import { sendAdminCreatedUser, sendProductAccessGranted } from './email.js';
+
+// ─── IAM email existence check ────────────────────────────────────────────────
+
+/**
+ * Returns true if the given email is already registered in the IAM service.
+ * Used to distinguish "new user" (send credentials email) from
+ * "existing user buying a product" (send access email only).
+ */
+async function _checkIamUserExists(email) {
+  const iamUrl = config.auth?.serviceUrl || config.iam?.serviceUrl;
+  if (!iamUrl) return false;
+  try {
+    const res = await fetch(
+      `${iamUrl}/api/v1/iam/users?search=${encodeURIComponent(email)}&limit=1`,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!res.ok) return false;
+    const body = await res.json();
+    const users = body?.data ?? [];
+    // Exact email match — search is fuzzy so compare explicitly
+    return Array.isArray(users) && users.some(
+      (u) => u.email?.toLowerCase() === email.toLowerCase(),
+    );
+  } catch {
+    // If IAM is unreachable, treat as unknown — don't block the purchase
+    return false;
+  }
+}
 
 // ─── Public entry point ────────────────────────────────────────────────────────
 
 /**
  * Provision a product account after a successful payment.
  *
+ * Common concerns shared by ALL products are handled here:
+ *   1. IAM email check  → determines whether to send the new-user credentials email
+ *   2. sendAdminCreatedUser  → only for brand-new users (not already in IAM)
+ *   3. sendProductAccessGranted → always sent after successful provisioning
+ *
+ * Each product-specific provisioner (_provision*) is responsible only for:
+ *   - Calling its own API
+ *   - Handling product-specific error codes (e.g. 409 → "already purchased")
+ *   - Returning a normalised result shape:
+ *       { success: true, loginUrl, userId, planType, temporaryPassword? }
+ *
+ * Adding a new product:
+ *   1. Add its config block to config/index.js → products (with name, description, features, planMap)
+ *   2. Add a new case to the switch below
+ *   3. Implement _provision<ProductName>() that returns the normalised shape above
+ *   — The IAM check and email logic below apply automatically.
+ *
  * @param {string} productId  - Must match a key in config.products
  * @param {object} data       - { name, email, planKey, paymentId?, businessName?, externalId? }
- * @returns {Promise<object>} - Product-specific result (always has success: true)
+ * @returns {Promise<object>} - Normalised result (always has success: true)
  */
 export async function provision(productId, data) {
   const productConfig = config.products?.[productId];
@@ -42,17 +91,54 @@ export async function provision(productId, data) {
     paymentId: data.paymentId,
   });
 
+  // ── Step 1: IAM pre-flight ────────────────────────────────────────────────
+  // Applies to every product. If the email already exists in IAM the user has
+  // login credentials — we skip the new-user credentials email later.
+  const existingIamUser = await _checkIamUserExists(data.email);
+  logger.info('IAM user existence check', { email: data.email, existingIamUser, productId });
+
+  // ── Step 2: Product-specific provisioning ─────────────────────────────────
+  let result;
+
   switch (productConfig.provisionType) {
     case 'easydev-communication':
-      return _provisionCommunication(productConfig, data);
+      result = await _provisionCommunication(productConfig, data);
+      break;
 
     // Add further product types here:
     // case 'generic-webhook':
-    //   return _provisionWebhook(productConfig, data);
+    //   result = await _provisionWebhook(productConfig, data);
+    //   break;
 
     default:
       throw new Error(`Unknown provisionType "${productConfig.provisionType}" for product "${productId}".`);
   }
+
+  // ── Step 3: Post-provision emails (all products) ──────────────────────────
+  // Only send credentials email for brand-new users (not already in IAM).
+  if (!existingIamUser && result.temporaryPassword) {
+    sendAdminCreatedUser({
+      username:          data.name,
+      email:             data.email,
+      temporaryPassword: result.temporaryPassword,
+      loginUrl:          result.loginUrl,
+    }).catch(() => {});
+  }
+
+  // Always notify the customer about their new product access.
+  sendProductAccessGranted({
+    username:           data.name,
+    email:              data.email,
+    productName:        productConfig.name,
+    productDescription: productConfig.description || '',
+    productUrl:         result.loginUrl,
+    planType:           result.planType || data.planKey,
+    accessStartDate:    new Date(),
+    accessEndDate:      new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    features:           productConfig.features || [],
+  }).catch(() => {});
+
+  return result;
 }
 
 // ─── EasyDev Communication AI ─────────────────────────────────────────────────
@@ -61,7 +147,9 @@ export async function provision(productId, data) {
  * Provision an EasyDev Communication AI account.
  *
  * Calls POST /onboarding/create-account on the AI Communication NestJS backend.
- * Returns { loginUrl, userId, businessId, temporaryPassword }.
+ *
+ * Returns the normalised shape expected by provision():
+ *   { success: true, loginUrl, userId, businessId, temporaryPassword, planType }
  *
  * @param {object} productCfg - config.products['easydev-communication']
  * @param {object} data       - { name, email, planKey, paymentId?, businessName?, externalId? }
@@ -117,16 +205,15 @@ async function _provisionCommunication(productCfg, data) {
   }
 
   if (!res.ok) {
-    // 409 Conflict = account already exists (idempotent — treat as success)
+    // 409 Conflict = account already exists in AI Comm → they already purchased
     if (res.status === 409) {
-      logger.warn('Communication account already exists — returning existing account info', {
+      logger.warn('Attempted duplicate purchase — AI Communication account already exists', {
         email: data.email,
       });
-      // Return a partial result — caller should redirect to login
-      return {
-        alreadyExists: true,
-        message: body?.message || 'Account already exists.',
-      };
+      throw new AppError(
+        'You have already purchased this product. Please log in to access your account.',
+        409,
+      );
     }
 
     const msg =
@@ -142,39 +229,21 @@ async function _provisionCommunication(productCfg, data) {
   }
 
   // Normalise — backend wraps in { data: {...} } or returns flat
-  const result = body?.data ?? body;
+  const raw = body?.data ?? body;
 
   logger.info('Communication account provisioned', {
-    userId:     result.userId,
-    businessId: result.businessId,
+    userId:     raw.userId,
+    businessId: raw.businessId,
     email:      data.email,
   });
 
-  // Send account credentials email (fire-and-forget — non-fatal)
-  sendAdminCreatedUser({
-    username:          data.name,
-    email:             data.email,
-    temporaryPassword: result.temporaryPassword,
-    loginUrl:          result.loginUrl,
-  }).catch(() => {});
-
-  // Send product access email with SSO link (fire-and-forget — non-fatal)
-  sendProductAccessGranted({
-    username:           data.name,
-    email:              data.email,
-    productName:        productCfg.name,
-    productDescription: productCfg.description || '',
-    productUrl:         result.loginUrl,
-    planType:           communicationPlan,
-    accessStartDate:    new Date(),
-    accessEndDate:      new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-    features:           productCfg.features || [],
-  }).catch(() => {});
-
+  // Return the normalised shape — provision() handles emails
   return {
-    loginUrl:          result.loginUrl,
-    userId:            result.userId,
-    businessId:        result.businessId,
-    temporaryPassword: result.temporaryPassword,
+    success:           true,
+    loginUrl:          raw.loginUrl,
+    userId:            raw.userId,
+    businessId:        raw.businessId,
+    temporaryPassword: raw.temporaryPassword,
+    planType:          communicationPlan,
   };
 }

@@ -100,7 +100,10 @@ function pmAuthHeaders(bearerToken, tenantId) {
 }
 
 function resolveProductId(body) {
-  return body.productId || 'easydev-communication';
+  if (!body.productId) {
+    throw new AppError('productId is required. Pass the product you are purchasing.', 400);
+  }
+  return body.productId;
 }
 
 /** Shared post-payment provisioning: provision the product account and respond. */
@@ -116,6 +119,15 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
       externalId,
     });
   } catch (err) {
+    // 409 = already purchased — surface this directly to the UI so the user
+    // sees a clear message instead of a generic "payment successful" screen.
+    if (err.statusCode === 409 || err.status === 409) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
+        data: { paymentVerified: true },
+      });
+    }
     logger.error('Post-payment provisioning error (payment was successful)', {
       productId,
       email,
