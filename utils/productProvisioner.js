@@ -18,7 +18,7 @@
 
 import { config } from '../config/index.js';
 import logger from './logger.js';
-import { sendAiCommunicationWelcome } from './email.js';
+import { sendAdminCreatedUser, sendProductAccessGranted } from './email.js';
 
 // ─── Public entry point ────────────────────────────────────────────────────────
 
@@ -150,14 +150,26 @@ async function _provisionCommunication(productCfg, data) {
     email:      data.email,
   });
 
-  // Send welcome email with login instructions (fire-and-forget — non-fatal)
-  sendAiCommunicationWelcome({
-    name:              data.name,
+  // Send account credentials email (fire-and-forget — non-fatal)
+  sendAdminCreatedUser({
+    username:          data.name,
     email:             data.email,
-    loginUrl:          result.loginUrl,
     temporaryPassword: result.temporaryPassword,
-    planName:          communicationPlan,
-  }).catch(() => {}); // errors already logged inside sendAiCommunicationWelcome
+    loginUrl:          result.loginUrl,
+  }).catch(() => {});
+
+  // Send product access email with SSO link (fire-and-forget — non-fatal)
+  sendProductAccessGranted({
+    username:           data.name,
+    email:              data.email,
+    productName:        productCfg.name,
+    productDescription: productCfg.description || '',
+    productUrl:         result.loginUrl,
+    planType:           communicationPlan,
+    accessStartDate:    new Date(),
+    accessEndDate:      new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    features:           productCfg.features || [],
+  }).catch(() => {});
 
   return {
     loginUrl:          result.loginUrl,

@@ -104,9 +104,17 @@ export const config = {
 		// EasyDev AI Communication Platform
 		'easydev-communication': {
 			name:          'EasyDev Communication AI',
+			description:   'AI-powered WhatsApp & email automation platform',
 			provisionType: 'easydev-communication',
 			provisionUrl:  process.env.COMMUNICATION_URL || 'http://localhost:4001/api/v1',
 			apiKey:        process.env.COMMUNICATION_API_KEY,
+			features: [
+				'AI-powered auto-replies',
+				'WhatsApp & email channels',
+				'Lead capture & CRM sync',
+				'Analytics dashboard',
+				'Priority support',
+			],
 			// EasyDev plan key → Communication platform plan enum
 			planMap: {
 				starter:  'pro',

@@ -24,7 +24,7 @@ const DASH  = config.dashboard.url;
 
 function _dispatch(to, templateId, data) {
   return apiCall(
-    `${URL}/send-email`,
+    `${URL}/email/send`,
     { method: 'POST', data: { to, templateId, data } },
     { headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' } }
   )
