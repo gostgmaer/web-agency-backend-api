@@ -111,13 +111,14 @@ function getPending(key) {
 const pmUrl = () => config.payment?.serviceUrl || 'http://localhost:3000';
 
 /** Service-to-service headers for payment-microservice (API key auth). */
-function pmServiceHeaders(tenantId, userId) {
+function pmServiceHeaders(tenantId, userId, userEmail) {
   const headers = {
     'x-api-key':    config.payment?.apiKey || '',
     'x-tenant-id':  tenantId || config.tenantId || 'easydev',
     'Content-Type': 'application/json',
   };
   if (userId) headers['x-user-id'] = userId;
+  if (userEmail) headers['x-user-email'] = userEmail;
   return headers;
 }
 
@@ -787,7 +788,7 @@ router.get(
         `${pmUrl()}/api/v1/payment-methods`,
         {
           method: 'GET',
-          headers: pmServiceHeaders(tenantId, req.user?.id),
+          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
         },
       );
 
@@ -823,7 +824,7 @@ router.post(
           data: {
             provider: req.body?.provider,
           },
-          headers: pmServiceHeaders(tenantId, req.user?.id),
+          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
         },
       );
 
@@ -860,7 +861,7 @@ router.post(
             provider: req.body?.provider,
             setAsDefault: req.body?.setAsDefault,
           },
-          headers: pmServiceHeaders(tenantId, req.user?.id),
+          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
         },
       );
 
@@ -900,7 +901,7 @@ router.patch(
           data: {
             provider: req.body?.provider,
           },
-          headers: pmServiceHeaders(tenantId, req.user?.id),
+          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
         },
       );
 
