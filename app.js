@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import mongoSanitize from "express-mongo-sanitize";
-import dotenv from "dotenv";
+import "dotenv/config";
 import compression from "compression";
 import { randomUUID } from "crypto";
 import mongoose from "mongoose";
@@ -27,8 +27,6 @@ import platformHealthRoutes from "./routes/platform-health.js";
 
 import logger from "./utils/logger.js";
 import { config } from "./config/index.js";
-
-dotenv.config();
 
 const app = express();
 const isDevelopment = config.app.nodeEnv !== "production";

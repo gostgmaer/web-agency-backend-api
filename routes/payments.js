@@ -27,7 +27,9 @@
 
 import express       from 'express';
 import { randomUUID } from 'crypto';
+import jwt           from 'jsonwebtoken';
 import { config }    from '../config/index.js';
+import { JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
 import logger        from '../utils/logger.js';
 import { provision } from '../utils/productProvisioner.js';
 import { AppError }  from '../utils/errors.js';
@@ -153,8 +155,45 @@ function getBillingPlan(planKey) {
   return plan;
 }
 
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
 function buildCheckoutCustomerId(email) {
-  return `checkout:${String(email).trim().toLowerCase()}`;
+  return `checkout:${normalizeEmail(email)}`;
+}
+
+function tryResolveCheckoutUser(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+
+  try {
+    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET, {
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+    });
+
+    return {
+      id: typeof decoded?.sub === 'string' ? decoded.sub : null,
+      email: typeof decoded?.email === 'string' ? normalizeEmail(decoded.email) : null,
+    };
+  } catch (error) {
+    logger.debug('Ignoring invalid bearer token on public checkout route', {
+      message: error?.message,
+    });
+    return null;
+  }
+}
+
+function resolveCheckoutIdentity(req, customerEmail) {
+  const authenticatedUser = tryResolveCheckoutUser(req);
+  const normalizedEmail = authenticatedUser?.email || normalizeEmail(customerEmail);
+
+  return {
+    customerId: authenticatedUser?.id || buildCheckoutCustomerId(normalizedEmail),
+    customerEmail: normalizedEmail,
+    legacyCustomerId: buildCheckoutCustomerId(normalizedEmail),
+  };
 }
 
 function mapSubscriptionStatus(status) {
@@ -179,6 +218,82 @@ function getDaysRemaining(dateValue) {
   if (Number.isNaN(targetDate.getTime())) return 0;
 
   return Math.max(0, Math.ceil((targetDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
+
+function extractCollection(payload) {
+  const data = payload?.data ?? payload;
+  if (Array.isArray(data?.data)) {
+    return {
+      items: data.data,
+      total: typeof data.total === 'number' ? data.total : data.data.length,
+    };
+  }
+
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      total: data.length,
+    };
+  }
+
+  return {
+    items: [],
+    total: 0,
+  };
+}
+
+function uniqueById(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    if (!item?.id || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+function resolveLegacyPeriod(from, interval, intervalCount = 1, trialDays = 0) {
+  const createdAt = new Date(from);
+  if (Number.isNaN(createdAt.getTime())) {
+    return {
+      status: 'active',
+      trialEndsAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+    };
+  }
+
+  const trialEndsAt = trialDays > 0
+    ? new Date(createdAt.getTime() + trialDays * 24 * 60 * 60 * 1000)
+    : null;
+  const periodStart = trialEndsAt ?? createdAt;
+  const periodEnd = new Date(periodStart);
+
+  switch (String(interval || 'month').toLowerCase()) {
+    case 'day':
+    case 'daily':
+      periodEnd.setDate(periodEnd.getDate() + intervalCount);
+      break;
+    case 'week':
+    case 'weekly':
+      periodEnd.setDate(periodEnd.getDate() + intervalCount * 7);
+      break;
+    case 'year':
+    case 'yearly':
+      periodEnd.setFullYear(periodEnd.getFullYear() + intervalCount);
+      break;
+    default:
+      periodEnd.setMonth(periodEnd.getMonth() + intervalCount);
+      break;
+  }
+
+  const inTrial = Boolean(trialEndsAt) && trialEndsAt.getTime() > Date.now();
+
+  return {
+    status: inTrial ? 'trial' : 'active',
+    trialEndsAt: trialEndsAt?.toISOString() || null,
+    currentPeriodStart: periodStart.toISOString(),
+    currentPeriodEnd: periodEnd.toISOString(),
+  };
 }
 
 function resolveConfiguredProduct(productId, applicationId) {
@@ -241,6 +356,74 @@ function normalizeCustomerProduct(subscription) {
     currentPeriodEnd: subscription?.currentPeriodEnd || null,
     cancelAtPeriodEnd: Boolean(subscription?.cancelledAt) && mapSubscriptionStatus(subscription?.status) !== 'cancelled',
     daysRemaining: getDaysRemaining(subscription?.trialEnd || subscription?.currentPeriodEnd),
+    billingProvider: typeof metadata.provider === 'string' ? metadata.provider : null,
+  };
+}
+
+function normalizeLegacyTransactionProduct(transaction) {
+  if (!transaction || transaction.status !== 'SUCCESS') return null;
+
+  const metadata = transaction?.metadata && typeof transaction.metadata === 'object' ? transaction.metadata : {};
+  const rawProductId = typeof metadata.productId === 'string' && metadata.productId.trim()
+    ? metadata.productId.trim()
+    : null;
+  const normalizedPlanId = typeof metadata.planId === 'string' && metadata.planId.trim()
+    ? metadata.planId.trim()
+    : null;
+  const rawPlanKey = typeof metadata.planKey === 'string' && metadata.planKey.trim()
+    ? metadata.planKey.trim().toLowerCase()
+    : null;
+  const planKey = rawPlanKey && BILLING_PLANS[rawPlanKey]
+    ? rawPlanKey
+    : (normalizedPlanId ? PLAN_KEY_BY_PLAN_ID[normalizedPlanId] || null : null);
+  const configuredPlan = planKey ? BILLING_PLANS[planKey] : null;
+  const { productId, productConfig } = resolveConfiguredProduct(rawProductId, null);
+  const launchSlug = productConfig?.iamProvisioning?.applicationSlug || productId || null;
+  const trialDays = Number.isFinite(Number(metadata.trialDays)) ? Number(metadata.trialDays) : 0;
+  const intervalCount = Number.isFinite(Number(metadata.intervalCount)) ? Number(metadata.intervalCount) : 1;
+  const period = resolveLegacyPeriod(transaction.createdAt, metadata.interval, intervalCount, trialDays);
+
+  return {
+    id: `transaction:${transaction.id}`,
+    productId,
+    applicationId: null,
+    launchSlug,
+    launchable: Boolean(launchSlug),
+    productName: productConfig?.name || metadata.productName || productId || 'Purchased product',
+    productDescription: productConfig?.description || '',
+    planId: normalizedPlanId,
+    planKey,
+    planName: configuredPlan?.productName || normalizedPlanId || 'Plan',
+    price: configuredPlan ? toMajorCurrencyUnit(configuredPlan.INR, 'INR') : 0,
+    currency: 'INR',
+    status: period.status,
+    trialEndsAt: period.trialEndsAt,
+    currentPeriodStart: period.currentPeriodStart,
+    currentPeriodEnd: period.currentPeriodEnd,
+    cancelAtPeriodEnd: false,
+    daysRemaining: getDaysRemaining(period.trialEndsAt || period.currentPeriodEnd),
+    billingProvider: transaction?.attempts?.[0]?.provider || null,
+  };
+}
+
+function normalizeCustomerInvoice(invoice) {
+  const firstItem = Array.isArray(invoice?.items) ? invoice.items[0] : null;
+  const invoicePlanName = typeof invoice?.metadata?.planName === 'string' && invoice.metadata.planName.trim()
+    ? invoice.metadata.planName.trim()
+    : typeof firstItem?.description === 'string' && firstItem.description.trim()
+      ? firstItem.description.trim()
+      : 'Subscription invoice';
+
+  return {
+    id: invoice?.id,
+    invoiceNumber: invoice?.invoiceNumber || invoice?.id,
+    amount: toMajorCurrencyUnit(invoice?.totalAmount, invoice?.currency),
+    currency: invoice?.currency || 'INR',
+    status: typeof invoice?.status === 'string' ? invoice.status.toLowerCase() : 'pending',
+    createdAt: invoice?.createdAt || new Date().toISOString(),
+    paidAt: invoice?.paidAt || null,
+    planName: invoicePlanName,
+    downloadUrl: null,
   };
 }
 
@@ -317,7 +500,8 @@ router.post('/initiate', async (req, res, next) => {
     const orderId  = randomUUID();
     const idempKey = randomUUID();
     const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
-    const customerId = buildCheckoutCustomerId(customerEmail);
+    const checkoutIdentity = resolveCheckoutIdentity(req, customerEmail);
+    const customerId = checkoutIdentity.customerId;
 
     if (!PUBLIC_CHECKOUT_PROVIDERS.includes(p)) {
       throw new AppError(`${p} is not available for public checkout.`, 400);
@@ -335,12 +519,15 @@ router.post('/initiate', async (req, res, next) => {
         currency: 'INR',
         providers: [p],
         metadata: {
+          billingMode: 'subscription',
           recurringMode: p === 'RAZORPAY',
           tenantId,
           productId,
           planKey,
           planId: plan.planId,
-          customerEmail,
+          customerEmail: checkoutIdentity.customerEmail,
+          customerId,
+          legacyCustomerId: checkoutIdentity.legacyCustomerId,
           productName: plan.productName,
           trialDays: plan.trialDays,
           interval: plan.interval,
@@ -368,7 +555,7 @@ router.post('/initiate', async (req, res, next) => {
       attemptId:     option.attemptId,
       productId,
       planKey,
-      customerEmail,
+      customerEmail: checkoutIdentity.customerEmail,
       customerId,
     });
 
@@ -478,33 +665,342 @@ router.get(
   async (req, res, next) => {
     try {
       if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
 
       const qs = new URLSearchParams(req.query).toString();
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/subscriptions${qs ? `?${qs}` : ''}`,
-        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
-      );
+      const tenantId = req.headers['x-tenant-id'];
+      const customerIds = uniqueById([
+        req.user?.id ? { id: req.user.id } : null,
+        req.user?.email ? { id: buildCheckoutCustomerId(req.user.email) } : null,
+      ].filter(Boolean)).map((item) => item.id);
 
-      if (result.error) {
-        logger.error('customer payment subscriptions failed', { status: result.status, userId: req.user?.id });
-        throw new AppError(result.data?.message || 'Failed to fetch subscriptions.', result.status || 502);
+      const subscriptionResults = await Promise.all(customerIds.map((customerId) =>
+        apiCall(
+          `${pmUrl()}/api/v1/subscriptions${qs ? `?${qs}` : ''}`,
+          { method: 'GET', headers: pmServiceHeaders(tenantId, customerId) },
+        )
+      ));
+
+      const failedSubscription = subscriptionResults.find((result) => result.error);
+      if (failedSubscription) {
+        logger.error('customer payment subscriptions failed', { status: failedSubscription.status, userId: req.user?.id });
+        throw new AppError(failedSubscription.data?.message || 'Failed to fetch subscriptions.', failedSubscription.status || 502);
       }
 
-      const payload = result.data?.data ?? result.data;
-      const subscriptions = Array.isArray(payload?.data)
-        ? payload.data
-        : Array.isArray(payload)
-          ? payload
-          : [];
-      const total = typeof payload?.total === 'number' ? payload.total : subscriptions.length;
+      const subscriptions = uniqueById(subscriptionResults.flatMap((result) => extractCollection(result.data).items));
+      let items = subscriptions.map(normalizeCustomerProduct);
+
+      if (items.length === 0) {
+        const transactionResults = await Promise.all(customerIds.map((customerId) =>
+          apiCall(
+            `${pmUrl()}/api/v1/payments${qs ? `?${qs}` : ''}`,
+            { method: 'GET', headers: pmServiceHeaders(tenantId, customerId) },
+          )
+        ));
+
+        const failedTransaction = transactionResults.find((result) => result.error);
+        if (failedTransaction) {
+          logger.error('customer payment transactions fallback failed', { status: failedTransaction.status, userId: req.user?.id });
+          throw new AppError(failedTransaction.data?.message || 'Failed to fetch subscriptions.', failedTransaction.status || 502);
+        }
+
+        items = uniqueById(
+          transactionResults
+            .flatMap((result) => extractCollection(result.data).items)
+            .map(normalizeLegacyTransactionProduct)
+            .filter(Boolean),
+        );
+      }
 
       return res.status(200).json({
         success: true,
         message: 'Subscriptions retrieved.',
         data: {
-          items: subscriptions.map(normalizeCustomerProduct),
-          total,
+          items,
+          total: items.length,
         },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.get(
+  '/invoices',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+
+      const qs = new URLSearchParams(req.query).toString();
+      const tenantId = req.headers['x-tenant-id'];
+      const customerIds = uniqueById([
+        req.user?.id ? { id: req.user.id } : null,
+        req.user?.email ? { id: buildCheckoutCustomerId(req.user.email) } : null,
+      ].filter(Boolean)).map((item) => item.id);
+
+      const invoiceResults = await Promise.all(customerIds.map((customerId) =>
+        apiCall(
+          `${pmUrl()}/api/v1/billing/invoices${qs ? `?${qs}` : ''}`,
+          { method: 'GET', headers: pmServiceHeaders(tenantId, customerId) },
+        )
+      ));
+
+      const failedInvoice = invoiceResults.find((result) => result.error);
+      if (failedInvoice) {
+        logger.error('customer payment invoices failed', { status: failedInvoice.status, userId: req.user?.id });
+        throw new AppError(failedInvoice.data?.message || 'Failed to fetch invoices.', failedInvoice.status || 502);
+      }
+
+      const invoices = uniqueById(
+        invoiceResults
+          .flatMap((result) => extractCollection(result.data).items)
+          .map(normalizeCustomerInvoice),
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Invoices retrieved.',
+        data: {
+          items: invoices,
+          total: invoices.length,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.get(
+  '/payment-methods',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+
+      const tenantId = req.headers['x-tenant-id'];
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/payment-methods`,
+        {
+          method: 'GET',
+          headers: pmServiceHeaders(tenantId, req.user?.id),
+        },
+      );
+
+      if (result.error) {
+        logger.error('customer payment methods failed', { status: result.status, userId: req.user?.id });
+        throw new AppError(result.data?.message || 'Failed to fetch saved payment methods.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Saved payment methods retrieved.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/payment-methods/setup-intent',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+
+      const tenantId = req.headers['x-tenant-id'];
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/payment-methods/setup-intent`,
+        {
+          method: 'POST',
+          data: {
+            provider: req.body?.provider,
+          },
+          headers: pmServiceHeaders(tenantId, req.user?.id),
+        },
+      );
+
+      if (result.error) {
+        logger.error('customer payment setup intent failed', { status: result.status, userId: req.user?.id });
+        throw new AppError(result.data?.message || 'Failed to create payment method setup intent.', result.status || 502);
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'Payment method setup intent created.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/payment-methods/setup-intents/:setupIntentId/complete',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+
+      const tenantId = req.headers['x-tenant-id'];
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/payment-methods/setup-intents/${encodeURIComponent(req.params.setupIntentId)}/complete`,
+        {
+          method: 'POST',
+          data: {
+            provider: req.body?.provider,
+            setAsDefault: req.body?.setAsDefault,
+          },
+          headers: pmServiceHeaders(tenantId, req.user?.id),
+        },
+      );
+
+      if (result.error) {
+        logger.error('customer payment setup completion failed', {
+          status: result.status,
+          userId: req.user?.id,
+          setupIntentId: req.params.setupIntentId,
+        });
+        throw new AppError(result.data?.message || 'Failed to complete payment method setup.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment method setup completed.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/payment-methods/:paymentMethodId/default',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+
+      const tenantId = req.headers['x-tenant-id'];
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/payment-methods/${encodeURIComponent(req.params.paymentMethodId)}/default`,
+        {
+          method: 'PATCH',
+          data: {
+            provider: req.body?.provider,
+          },
+          headers: pmServiceHeaders(tenantId, req.user?.id),
+        },
+      );
+
+      if (result.error) {
+        logger.error('customer payment default method update failed', {
+          status: result.status,
+          userId: req.user?.id,
+          paymentMethodId: req.params.paymentMethodId,
+        });
+        throw new AppError(result.data?.message || 'Failed to update default payment method.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Default payment method updated.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  '/subscriptions/:id',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+      if (String(req.params.id || '').startsWith('transaction:')) {
+        throw new AppError('This purchase must be backfilled to a subscription before it can be cancelled.', 409);
+      }
+
+      const tenantId = req.headers['x-tenant-id'];
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/subscriptions/${encodeURIComponent(req.params.id)}`,
+        {
+          method: 'DELETE',
+          data: {
+            reason: req.body?.reason,
+            immediate: Boolean(req.body?.immediate),
+          },
+          headers: pmServiceHeaders(tenantId, req.user?.id),
+        },
+      );
+
+      if (result.error) {
+        logger.error('customer payment cancellation failed', { status: result.status, userId: req.user?.id, subscriptionId: req.params.id });
+        throw new AppError(result.data?.message || 'Failed to cancel subscription.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Subscription cancelled.',
+        data: result.data?.data ?? result.data,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/subscriptions/:id/plan',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+      if (String(req.params.id || '').startsWith('transaction:')) {
+        throw new AppError('This purchase must be backfilled to a subscription before its plan can be changed.', 409);
+      }
+
+      const requestedPlanKey = typeof req.body?.planKey === 'string' ? req.body.planKey.trim().toLowerCase() : '';
+      const targetPlan = getBillingPlan(requestedPlanKey);
+      const tenantId = req.headers['x-tenant-id'];
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/subscriptions/${encodeURIComponent(req.params.id)}/plan`,
+        {
+          method: 'PATCH',
+          data: { planId: targetPlan.planId },
+          headers: pmServiceHeaders(tenantId, req.user?.id),
+        },
+      );
+
+      if (result.error) {
+        logger.error('customer payment plan change failed', {
+          status: result.status,
+          userId: req.user?.id,
+          subscriptionId: req.params.id,
+          planKey: requestedPlanKey,
+        });
+        throw new AppError(result.data?.message || 'Failed to change subscription plan.', result.status || 502);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Subscription plan updated.',
+        data: normalizeCustomerProduct(result.data?.data ?? result.data),
       });
     } catch (err) {
       next(err);

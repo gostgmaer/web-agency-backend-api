@@ -1,11 +1,9 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import app from "./app.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
 import logger from "./utils/logger.js";
 import { config } from "./config/index.js";
 import { startScheduler } from "./services/leadSchedulerService.js";
-
-dotenv.config();
 
 const PORT = config.app.port || 3000;
 const REQUEST_TIMEOUT = Number(config.performance.requestTimeout) || 30000;
