@@ -65,6 +65,18 @@ const BILLING_PLANS = {
   },
 };
 
+const SUBSCRIPTION_STATUS_MAP = {
+  TRIALING: 'trial',
+  ACTIVE: 'active',
+  PAST_DUE: 'past_due',
+  CANCELLED: 'cancelled',
+  EXPIRED: 'expired',
+};
+
+const PLAN_KEY_BY_PLAN_ID = Object.fromEntries(
+  Object.entries(BILLING_PLANS).map(([planKey, plan]) => [plan.planId, planKey]),
+);
+
 const PUBLIC_CHECKOUT_PROVIDERS = ['RAZORPAY', 'CASH'];
 
 // ─── Pending order store ──────────────────────────────────────────────────────
@@ -117,10 +129,20 @@ function pmAuthHeaders(bearerToken, tenantId) {
 }
 
 function resolveProductId(body) {
-  if (!body.productId) {
-    throw new AppError('productId is required. Pass the product you are purchasing.', 400);
+  const requestedProductId = typeof body?.productId === 'string' ? body.productId.trim() : '';
+  if (requestedProductId) {
+    if (!config.products?.[requestedProductId]) {
+      throw new AppError(`Unknown productId "${requestedProductId}".`, 400);
+    }
+    return requestedProductId;
   }
-  return body.productId;
+
+  const configuredProductIds = Object.keys(config.products || {});
+  if (configuredProductIds.length === 1) {
+    return configuredProductIds[0];
+  }
+
+  throw new AppError('productId is required. Pass the product you are purchasing.', 400);
 }
 
 function getBillingPlan(planKey) {
@@ -133,6 +155,93 @@ function getBillingPlan(planKey) {
 
 function buildCheckoutCustomerId(email) {
   return `checkout:${String(email).trim().toLowerCase()}`;
+}
+
+function mapSubscriptionStatus(status) {
+  if (typeof status !== 'string') return 'active';
+  return SUBSCRIPTION_STATUS_MAP[status.toUpperCase()] || status.toLowerCase();
+}
+
+function toMajorCurrencyUnit(amount, currency = 'INR') {
+  const parsed = Number(amount ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+
+  const zeroDecimalCurrencies = new Set(['JPY', 'KRW']);
+  const divisor = zeroDecimalCurrencies.has(String(currency).toUpperCase()) ? 1 : 100;
+
+  return parsed / divisor;
+}
+
+function getDaysRemaining(dateValue) {
+  if (!dateValue) return 0;
+
+  const targetDate = new Date(dateValue);
+  if (Number.isNaN(targetDate.getTime())) return 0;
+
+  return Math.max(0, Math.ceil((targetDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
+
+function resolveConfiguredProduct(productId, applicationId) {
+  const configuredProducts = Object.entries(config.products || {});
+  const normalizedProductId = typeof productId === 'string' && productId.trim() ? productId.trim() : null;
+  const normalizedApplicationId =
+    typeof applicationId === 'string' && applicationId.trim() ? applicationId.trim() : null;
+
+  if (normalizedProductId && config.products?.[normalizedProductId]) {
+    return { productId: normalizedProductId, productConfig: config.products[normalizedProductId] };
+  }
+
+  if (normalizedApplicationId) {
+    const matchedProduct = configuredProducts.find(([, productConfig]) =>
+      productConfig?.iamProvisioning?.applicationSlug === normalizedApplicationId,
+    );
+
+    if (matchedProduct) {
+      return { productId: matchedProduct[0], productConfig: matchedProduct[1] };
+    }
+  }
+
+  return {
+    productId: normalizedProductId || normalizedApplicationId,
+    productConfig: null,
+  };
+}
+
+function normalizeCustomerProduct(subscription) {
+  const metadata = subscription?.metadata && typeof subscription.metadata === 'object' ? subscription.metadata : {};
+  const plan = subscription?.plan && typeof subscription.plan === 'object' ? subscription.plan : {};
+  const rawProductId = typeof metadata.productId === 'string' && metadata.productId.trim()
+    ? metadata.productId.trim()
+    : null;
+  const planApplicationId = typeof plan.applicationId === 'string' && plan.applicationId.trim()
+    ? plan.applicationId.trim()
+    : null;
+  const normalizedPlanId = typeof plan.id === 'string' && plan.id.trim()
+    ? plan.id.trim()
+    : (typeof metadata.planId === 'string' && metadata.planId.trim() ? metadata.planId.trim() : null);
+  const { productId, productConfig } = resolveConfiguredProduct(rawProductId, planApplicationId);
+  const launchSlug = productConfig?.iamProvisioning?.applicationSlug || planApplicationId || productId || null;
+
+  return {
+    id: subscription?.id,
+    productId,
+    applicationId: planApplicationId,
+    launchSlug,
+    launchable: Boolean(launchSlug),
+    productName: productConfig?.name || plan.name || productId || 'Purchased product',
+    productDescription: productConfig?.description || plan.description || '',
+    planId: normalizedPlanId,
+    planKey: normalizedPlanId ? PLAN_KEY_BY_PLAN_ID[normalizedPlanId] || null : null,
+    planName: plan.name || normalizedPlanId || 'Plan',
+    price: toMajorCurrencyUnit(plan.amount, plan.currency),
+    currency: plan.currency || 'INR',
+    status: mapSubscriptionStatus(subscription?.status),
+    trialEndsAt: subscription?.trialEnd || null,
+    currentPeriodStart: subscription?.currentPeriodStart || null,
+    currentPeriodEnd: subscription?.currentPeriodEnd || null,
+    cancelAtPeriodEnd: Boolean(subscription?.cancelledAt) && mapSubscriptionStatus(subscription?.status) !== 'cancelled',
+    daysRemaining: getDaysRemaining(subscription?.trialEnd || subscription?.currentPeriodEnd),
+  };
 }
 
 /** Shared post-payment provisioning: provision the product account and respond. */
@@ -183,8 +292,9 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
  * POST /api/payments/initiate
  *
  * Starts a payment with any enabled provider.
- * Body:    { provider, planKey, customerEmail }
+ * Body:    { provider, planKey, customerEmail, productId? }
  *          provider    — 'RAZORPAY' | 'CASH' (value from GET /methods)
+ *          productId   — optional only when exactly one product is configured
  * Returns: provider-specific data:
  *          RAZORPAY → { provider, orderId, amount, currency, keyId }
  *          CASH     → { provider, referenceCode, transactionId, attemptId, amount, currency }
@@ -199,6 +309,8 @@ router.post('/initiate', async (req, res, next) => {
     if (!provider || !planKey || !customerEmail) {
       throw new AppError('provider, planKey, and customerEmail are required.', 400);
     }
+
+    const productId = resolveProductId(req.body);
 
     const p        = provider.toUpperCase();
     const plan     = getBillingPlan(planKey);
@@ -225,6 +337,7 @@ router.post('/initiate', async (req, res, next) => {
         metadata: {
           recurringMode: p === 'RAZORPAY',
           tenantId,
+          productId,
           planKey,
           planId: plan.planId,
           customerEmail,
@@ -253,6 +366,7 @@ router.post('/initiate', async (req, res, next) => {
     storePending(refKey, {
       transactionId: pmData.transactionId,
       attemptId:     option.attemptId,
+      productId,
       planKey,
       customerEmail,
       customerId,
@@ -339,7 +453,7 @@ router.post('/verify', async (req, res, next) => {
     pendingOrders.delete(token);
 
     return handlePostPayment(res, {
-      productId:    resolveProductId(req.body),
+      productId:    resolveProductId({ productId: req.body.productId || pending.productId }),
       name:         name || email,
       email:        String(email),
       planKey:      planKey || pending.planKey || 'growth',
@@ -351,6 +465,52 @@ router.post('/verify', async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * GET /api/payments/subscriptions
+ *
+ * Lists purchased products for the current member. This normalizes payment
+ * subscriptions into a product-centric shape for the EasyDev member portal.
+ */
+router.get(
+  '/subscriptions',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+
+      const qs = new URLSearchParams(req.query).toString();
+      const result = await apiCall(
+        `${pmUrl()}/api/v1/subscriptions${qs ? `?${qs}` : ''}`,
+        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
+      );
+
+      if (result.error) {
+        logger.error('customer payment subscriptions failed', { status: result.status, userId: req.user?.id });
+        throw new AppError(result.data?.message || 'Failed to fetch subscriptions.', result.status || 502);
+      }
+
+      const payload = result.data?.data ?? result.data;
+      const subscriptions = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload)
+          ? payload
+          : [];
+      const total = typeof payload?.total === 'number' ? payload.total : subscriptions.length;
+
+      return res.status(200).json({
+        success: true,
+        message: 'Subscriptions retrieved.',
+        data: {
+          items: subscriptions.map(normalizeCustomerProduct),
+          total,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WEBHOOKS — raw body forwarded to payment-microservice
