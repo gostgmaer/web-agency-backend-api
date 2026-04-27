@@ -16,8 +16,8 @@
 import express       from 'express';
 import axios         from 'axios';
 import { provision } from '../utils/productProvisioner.js';
+import { resolveApplicationId, resolveTenantId } from '../utils/iamProvisioner.js';
 import { AppError }  from '../utils/errors.js';
-import { authenticate, authorize } from '../middleware/auth.js';
 import { config }    from '../config/index.js';
 import logger        from '../utils/logger.js';
 
@@ -111,32 +111,58 @@ router.post('/provision', async (req, res, next) => {
 //
 // Requires:  Authorization: Bearer <IAM access token>
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/launch', authenticate, authorize('member'), async (req, res, next) => {
+router.get('/launch', async (req, res, next) => {
   try {
-    const { slug, applicationId } = req.query;
-
-    if (!slug && !applicationId) {
-      return next(new AppError('Provide either ?slug= or ?applicationId= to identify the application.', 400));
+    const customerJwt = req.headers.authorization;
+    if (!customerJwt || !customerJwt.startsWith('Bearer ')) {
+      return next(new AppError('Launch requires a valid Bearer access token. Open it from the dashboard or send Authorization: Bearer YOUR_ACCESS_TOKEN.', 401));
     }
+
+    const { slug, applicationId } = req.query;
+    const defaultCommunicationSlug = config.products?.['easydev-communication']?.iamProvisioning?.applicationSlug;
+
     if (slug && applicationId) {
       return next(new AppError('Provide only one of ?slug= or ?applicationId=, not both.', 400));
     }
 
     // Sanitise — both must be non-empty strings
-    const resolvedSlug = typeof slug === 'string' && slug.trim() ? slug.trim() : undefined;
+    const resolvedSlug = typeof slug === 'string' && slug.trim()
+      ? slug.trim()
+      : (!applicationId && defaultCommunicationSlug ? defaultCommunicationSlug : undefined);
     const resolvedAppId = typeof applicationId === 'string' && applicationId.trim() ? applicationId.trim() : undefined;
 
-    const iamCfg = config.iam;
+    if (!resolvedSlug && !resolvedAppId) {
+      return next(new AppError('Provide either ?slug= or ?applicationId= to identify the application.', 400));
+    }
 
-    // Forward the customer's own IAM JWT directly to the IAM SSO generate endpoint.
-    const customerJwt = req.headers.authorization; // "Bearer <iam_access_token>"
+    const iamCfg = config.iam;
+    const communicationTenantRef =
+      config.products?.['easydev-communication']?.iamProvisioning?.tenantSlug ||
+      config.tenant.defaultTenantId;
+
+    let resolvedTenantId;
+    if (communicationTenantRef) {
+      try {
+        resolvedTenantId = await resolveTenantId(communicationTenantRef);
+      } catch (tenantError) {
+        logger.error('Failed to resolve IAM tenant for SSO launch', {
+          tenantRef: communicationTenantRef,
+          error: tenantError?.message,
+        });
+        return next(new AppError('SSO launch is misconfigured — unable to resolve the IAM tenant.', 503));
+      }
+    }
+
+    const launchApplicationId = resolvedAppId || (resolvedSlug
+      ? await resolveApplicationId(resolvedSlug, resolvedTenantId)
+      : undefined);
 
     const iamRes = await axios.post(
       `${iamCfg.serviceUrl}/api/v1/iam/sso/generate`,
       {
         ...(resolvedSlug       ? { slug: resolvedSlug }             : {}),
         ...(resolvedAppId      ? { applicationId: resolvedAppId }   : {}),
-        ...(config.tenant.defaultTenantId ? { tenantId: config.tenant.defaultTenantId } : {}),
+        ...(resolvedTenantId   ? { tenantId: resolvedTenantId }     : {}),
       },
       {
         headers: {
@@ -156,12 +182,14 @@ router.get('/launch', authenticate, authorize('member'), async (req, res, next) 
       throw new AppError(`SSO launch misconfigured — set frontendUrl on the '${identifier}' application record in IAM.`, 503);
     }
 
-    const appParam = resolvedSlug
-      ? `slug=${encodeURIComponent(resolvedSlug)}`
-      : `appId=${encodeURIComponent(resolvedAppId)}`;
+    if (!launchApplicationId) {
+      throw new AppError('SSO launch misconfigured — unable to resolve an application id for the requested product.', 503);
+    }
+
+    const appParam = `appId=${encodeURIComponent(launchApplicationId)}`;
     const launchUrl = `${frontendUrl}/sso?token=${encodeURIComponent(token)}&${appParam}`;
 
-    logger.info('SSO launch URL generated', { userId: req.user.id, slug: resolvedSlug, applicationId: resolvedAppId });
+    logger.info('SSO launch URL generated', { slug: resolvedSlug, applicationId: launchApplicationId });
 
     return res.json({
       success: true,

@@ -147,23 +147,29 @@ function generateTemporaryPassword(length = 14) {
   return password;
 }
 
-async function resolveTenantId(tenantSlug) {
-  if (!tenantSlug) return null;
-  if (resolvedTenantIds.has(tenantSlug)) return resolvedTenantIds.get(tenantSlug);
+export async function resolveTenantId(tenantRef) {
+  if (!tenantRef) return null;
+  if (resolvedTenantIds.has(tenantRef)) return resolvedTenantIds.get(tenantRef);
 
   const tenants = unwrapList(await iamRequest('/tenants?page=1&limit=100'));
-  const tenant = tenants.find((entry) => entry.slug === tenantSlug);
+  const tenant = tenants.find((entry) => {
+    const candidateIds = [entry.internalId, entry.id, entry.publicId].filter(Boolean);
+    return entry.slug === tenantRef || candidateIds.includes(tenantRef);
+  });
   const tenantId = tenant?.internalId || tenant?.id || tenant?.publicId || null;
 
   if (!tenantId) {
-    throw new Error(`IAM tenant with slug "${tenantSlug}" was not found.`);
+    throw new Error(`IAM tenant "${tenantRef}" was not found.`);
   }
 
-  resolvedTenantIds.set(tenantSlug, tenantId);
+  if (tenant?.slug) {
+    resolvedTenantIds.set(tenant.slug, tenantId);
+  }
+  resolvedTenantIds.set(tenantRef, tenantId);
   return tenantId;
 }
 
-async function resolveApplicationId(applicationSlug, tenantId) {
+export async function resolveApplicationId(applicationSlug, tenantId) {
   if (!applicationSlug) return null;
   const cacheKey = `${tenantId || 'global'}:${applicationSlug}`;
   if (resolvedApplicationIds.has(cacheKey)) return resolvedApplicationIds.get(cacheKey);

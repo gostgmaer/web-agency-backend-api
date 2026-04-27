@@ -1,6 +1,7 @@
 import express from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { config } from '../config/index.js';
+import { apiCall } from '../lib/axiosCall.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
@@ -42,6 +43,65 @@ function buildProxy(target, basePath, serviceName) {
       },
     },
   });
+}
+
+const CUSTOMER_CHANNEL_TYPE_MAP = {
+  email: 'email_smtp',
+  whatsapp: 'whatsapp_meta',
+};
+
+function customerChannelUrl(path = '') {
+  const normalizedBasePath = communicationProxyPath.endsWith('/')
+    ? communicationProxyPath.slice(0, -1)
+    : communicationProxyPath;
+  return `${communicationProxyTarget}${normalizedBasePath}${path}`;
+}
+
+function customerProxyHeaders(req) {
+  return {
+    ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
+  };
+}
+
+function normalizeCustomerChannel(channel) {
+  const type = String(channel.channelType || '').startsWith('whatsapp') ? 'whatsapp' : 'email';
+
+  return {
+    id: channel.id,
+    type,
+    identifier: channel.identifier ?? channel.metadata?.identifier ?? '',
+    displayName: channel.displayName,
+    status: channel.isActive ? 'active' : 'inactive',
+    connectedAt: channel.createdAt,
+    ...(typeof channel.messageCount === 'number' ? { messageCount: channel.messageCount } : {}),
+  };
+}
+
+function buildCustomerChannelPayload(body) {
+  const type = typeof body?.type === 'string' ? body.type.trim().toLowerCase() : '';
+  const identifier = typeof body?.identifier === 'string' ? body.identifier.trim() : '';
+  const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : '';
+
+  if (!CUSTOMER_CHANNEL_TYPE_MAP[type]) {
+    return { error: 'type must be one of: email, whatsapp' };
+  }
+  if (!identifier) {
+    return { error: 'identifier is required' };
+  }
+  if (!displayName) {
+    return { error: 'displayName is required' };
+  }
+
+  return {
+    channelType: CUSTOMER_CHANNEL_TYPE_MAP[type],
+    identifier,
+    displayName,
+    credentials: {
+      placeholder: true,
+      identifier,
+      source: 'customer-dashboard',
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +161,69 @@ const communicationProxyTarget = config.communication?.proxyTarget ?? null;
 const communicationProxyPath   = config.communication?.proxyPath   ?? '/api/v1';
 
 if (communicationProxyTarget) {
+  router.get('/customer/channels', async (req, res) => {
+    const response = await apiCall(customerChannelUrl('/channels'), {
+      method: 'GET',
+      headers: customerProxyHeaders(req),
+    });
+
+    if (response.error) {
+      return res.status(response.status ?? 502).json(response.data ?? {
+        success: false,
+        message: 'Failed to fetch customer channels.',
+      });
+    }
+
+    const channels = Array.isArray(response.data)
+      ? response.data
+        .filter((channel) => channel.identifier ?? channel.metadata?.identifier)
+        .map(normalizeCustomerChannel)
+      : [];
+
+    return res.json(channels);
+  });
+
+  router.post('/customer/channels', async (req, res) => {
+    const payload = buildCustomerChannelPayload(req.body);
+    if (payload.error) {
+      return res.status(400).json({
+        success: false,
+        message: payload.error,
+      });
+    }
+
+    const response = await apiCall(customerChannelUrl('/channels'), {
+      method: 'POST',
+      headers: customerProxyHeaders(req),
+      data: payload,
+    });
+
+    if (response.error) {
+      return res.status(response.status ?? 502).json(response.data ?? {
+        success: false,
+        message: 'Failed to add customer channel.',
+      });
+    }
+
+    return res.status(response.status ?? 201).json(normalizeCustomerChannel(response.data));
+  });
+
+  router.delete('/customer/channels/:id', async (req, res) => {
+    const response = await apiCall(customerChannelUrl(`/channels/${req.params.id}`), {
+      method: 'DELETE',
+      headers: customerProxyHeaders(req),
+    });
+
+    if (response.error) {
+      return res.status(response.status ?? 502).json(response.data ?? {
+        success: false,
+        message: 'Failed to delete customer channel.',
+      });
+    }
+
+    return res.status(response.status ?? 204).end();
+  });
+
   router.use('/customer', buildProxy(communicationProxyTarget, communicationProxyPath, 'AI Communication'));
 } else {
   router.use('/customer', serviceUnavailable('AI Communication'));
