@@ -23,6 +23,26 @@ import logger        from '../utils/logger.js';
 
 const router = express.Router();
 
+function getCommunicationApiBase() {
+  const target = config.communication?.proxyTarget;
+  const path = config.communication?.proxyPath;
+
+  if (!target || !path) {
+    throw new AppError('AI Communication service is not available.', 503);
+  }
+
+  return `${target}${path}`;
+}
+
+function getBearerAuthorization(req) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) {
+    throw new AppError('A valid Bearer access token is required.', 401);
+  }
+
+  return auth;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/communication/provision
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,6 +224,49 @@ router.get('/launch', async (req, res, next) => {
     if (status === 404) return next(new AppError('Application not found — please contact support.', 404));
     logger.error('SSO launch failed', { error: err?.message });
     next(err);
+  }
+});
+
+router.get('/admin/providers', async (req, res, next) => {
+  try {
+    const response = await axios.get(`${getCommunicationApiBase()}/admin/providers`, {
+      headers: {
+        Authorization: getBearerAuthorization(req),
+      },
+      timeout: 10_000,
+    });
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to fetch AI Communication providers.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
+router.patch('/admin/providers/:id/toggle', async (req, res, next) => {
+  try {
+    const response = await axios.patch(
+      `${getCommunicationApiBase()}/admin/providers/${encodeURIComponent(req.params.id)}/toggle`,
+      { isEnabled: req.body?.isEnabled },
+      {
+        headers: {
+          Authorization: getBearerAuthorization(req),
+          'Content-Type': 'application/json',
+        },
+        timeout: 10_000,
+      },
+    );
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to update AI Communication provider.',
+      err?.response?.status || 502,
+    ));
   }
 });
 
