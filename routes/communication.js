@@ -246,6 +246,49 @@ router.get('/admin/providers', async (req, res, next) => {
   }
 });
 
+router.get('/admin/providers/health', async (req, res, next) => {
+  try {
+    const response = await axios.get(`${getCommunicationApiBase()}/admin/providers/health`, {
+      headers: {
+        Authorization: getBearerAuthorization(req),
+      },
+      timeout: 30_000,
+    });
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to check AI Communication provider health.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
+router.patch('/admin/providers/:id', async (req, res, next) => {
+  try {
+    const response = await axios.patch(
+      `${getCommunicationApiBase()}/admin/providers/${encodeURIComponent(req.params.id)}`,
+      req.body,
+      {
+        headers: {
+          Authorization: getBearerAuthorization(req),
+          'Content-Type': 'application/json',
+        },
+        timeout: 10_000,
+      },
+    );
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to update AI Communication provider settings.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
 router.patch('/admin/providers/:id/toggle', async (req, res, next) => {
   try {
     const response = await axios.patch(
