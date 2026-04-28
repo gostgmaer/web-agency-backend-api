@@ -1,611 +1,172 @@
-# Web Development Agency API
+# Web Agency Backend API
 
-A comprehensive REST API backend service for a Web Development Agency website, built with Node.js, Express.js, and MongoDB. This API serves both public marketing frontend and secured admin dashboard applications.
+`web-agency-backend-api` is the single browser-facing API origin for the EasyDev website and member portal. It combines gateway behavior with several owned business modules so the frontend can integrate against one `/api` base URL instead of talking directly to every internal service.
 
-## 🚀 Features
+## What This Service Owns
 
-- **JWT Authentication** with role-based authorization
-- **Newsletter Management** with email notifications
-- **Blog System** with publishing workflow
-- **Contact Form** handling with email notifications
-- **Project Inquiry** system with status tracking
-- **Service Plans** management
-- **Email Integration** with template-based system
-- **Rate Limiting** and security middleware
-- **Comprehensive Logging** and error handling
-- **API Documentation** with Swagger UI
-- **Input Validation** and sanitization
-- **Pagination** and filtering support
+| Area | Route prefix | Notes |
+|---|---|---|
+| Health and readiness | `/api/health`, `/api/ready`, `/api/platform-health` | local health plus aggregated upstream checks |
+| Leads CRM | `/api/leads/*` | public lead submit and authenticated CRM, proposal, contract, note, import, export, attachment flows |
+| Newsletter | `/api/newsletter/*` | MongoDB-backed double opt-in lifecycle |
+| Payments adapter | `/api/payments/*` | public checkout plus authenticated subscription and billing operations, delegated to `payment-microservice` |
+| AI Communication provisioning and launch | `/api/communication/*` | post-purchase provisioning and IAM-backed SSO launch |
+| Proposal HTML upload | `/api/upload/proposal` | stores local HTML under `uploads/proposals` |
+| Budget calculator | `/api/calculator/*` | public cost estimation |
+| Postman collection | `/api/postman-collection` | direct import helper |
 
-## 📋 Prerequisites
+## What This Service Proxies
 
-- Node.js 18+ 
-- MongoDB 4.4+
-- Email service running on `localhost:3000/send-email`
+| Gateway prefix | Downstream target |
+|---|---|
+| `/api/auth/*` | IAM auth module |
+| `/api/rbac/*` | IAM RBAC module |
+| `/api/users/*` | IAM users module |
+| `/api/tenants/*` | IAM tenants module |
+| `/api/sessions/*` | IAM sessions module |
+| `/api/iam/*` | IAM health, logs, stats, security, feature flags, apps, settings |
+| `/api/files/*` | file upload service |
+| `/api/customer/*` | AI Communication customer APIs |
 
-## 🛠️ Installation
+## Recommended Local Port Map
 
-1. **Clone the repository**
-```bash
-git clone <repository-url>
-cd web-agency-backend-api
-```
+The workspace contains multiple services with overlapping defaults. Use a stable local map like this:
 
-2. **Install dependencies**
-```bash
-npm install
-```
+| Service | Recommended port |
+|---|---|
+| `easydev` | `3000` |
+| `multi-tannet-auth-services` | `3100` |
+| `payment-microservice` | `3200` |
+| `ai automation communication` backend | `3001` |
+| `ai automation communication` frontend | `3002` |
+| `web-agency-backend-api` | `3500` |
 
-3. **Environment Configuration**
-```bash
-cp .env.example .env
-```
+## Critical Environment Variables
 
-Edit `.env` file with your configuration:
+Create `.env` with values that match the rest of the stack:
+
 ```env
-# Database
+PORT=3500
+NODE_ENV=development
+FRONTEND_URL=http://localhost:3000
+CORS_ORIGINS=http://localhost:3000,http://localhost:3002
 MONGODB_URI=mongodb://localhost:27017/web-agency
 
-# JWT
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-JWT_EXPIRE=7d
+AUTH_SERVICE_URL=http://localhost:3100
+FILE_UPLOAD_SERVICE_URL=http://localhost:4001
+COMMUNICATION_URL=http://localhost:3001/api/v1
+PAYMENT_SERVICE_URL=http://localhost:3200
+EMAIL_SERVICE_URL=http://localhost:4000
 
-# Admin Configuration
-ADMIN_EMAIL=admin@webagency.com
-ADMIN_PASSWORD=admin123
+JWT_ACCESS_SECRET=change-me-and-match-iam-jwt-secret
+JWT_ISSUER=user-auth-service
+JWT_AUDIENCE=dashboard-app
 
-# Application
-NODE_ENV=development
-PORT=3000
-FRONTEND_URL=http://localhost:3001
+COMMUNICATION_API_KEY=change-me-and-match-ai-comm-sales-api-key
+PAYMENT_SERVICE_API_KEY=change-me-plaintext-key-for-payment-service
+ADMIN_EMAIL=admin@easydev.local
+TENANT_ID=easydev
 ```
 
-4. **Create Admin User**
+Shared-secret rules:
+
+- `JWT_ACCESS_SECRET` must match IAM `JWT_SECRET` if you want local JWT verification to succeed.
+- `COMMUNICATION_API_KEY` must match AI Communication `SALES_API_KEY`.
+- `PAYMENT_SERVICE_API_KEY` must be the plaintext key whose hash is trusted by the payment microservice.
+
+## Install And Run
+
 ```bash
-node scripts/createAdmin.js
+pnpm install
+pnpm dev
 ```
 
-5. **Start the Server**
+Other scripts:
+
 ```bash
-# Development
-npm run dev
-
-# Production
-npm start
+pnpm start
+pnpm start:cluster
 ```
 
-## 📚 API Documentation
+## Browser Integration Contract
 
-### Base URL
-```
-http://localhost:3000/api
-```
+The frontend should use this service as its only public API base:
 
-### Interactive Documentation
-Visit `http://localhost:3000/api-docs` for Swagger UI documentation.
-
-## 🔐 Authentication
-
-### Admin Login
-```http
-POST /api/auth/login
-Content-Type: application/json
-
-{
-  "email": "admin@webagency.com",
-  "password": "admin123"
-}
+```text
+http://localhost:3500/api
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Login successful",
-  "data": {
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "admin": {
-      "_id": "...",
-      "email": "admin@webagency.com",
-      "name": "System Admin",
-      "role": "super-admin"
-    }
-  }
-}
-```
+That gives the browser one origin for:
 
-### Protected Endpoints
-Include JWT token in Authorization header:
-```http
-Authorization: Bearer <your-jwt-token>
-```
+- public lead and newsletter submission
+- member authentication through IAM proxies
+- checkout and billing flows
+- customer product data from AI Communication
+- AI Communication SSO launch
 
-## 📧 Newsletter API
+## Current Integration Flows
 
-### Subscribe to Newsletter
-```http
-POST /api/newsletter/subscribe
-Content-Type: application/json
+### Lead submit
 
-{
-  "email": "user@example.com"
-}
-```
+Public websites submit to `POST /api/leads/submit` with `x-tenant-id`. The same module then exposes authenticated CRM routes for staff and member dashboards.
 
-**Features:**
-- Sends welcome email automatically
-- Handles resubscription gracefully
-- Prevents duplicate subscriptions
+### Newsletter
 
-### Unsubscribe from Newsletter
-```http
-POST /api/newsletter/unsubscribe
-Content-Type: application/json
+Newsletter is fully owned here and uses double opt-in:
 
-{
-  "email": "user@example.com"
-}
-```
+1. `POST /api/newsletter/subscribe`
+2. `GET /api/newsletter/confirm/:token`
+3. `POST /api/newsletter/unsubscribe`
 
-### Get Subscribers (Admin Only)
-```http
-GET /api/newsletter?page=1&limit=10&status=active
-Authorization: Bearer <token>
-```
+### Auth
 
-**Query Parameters:**
-- `page` (optional): Page number (default: 1)
-- `limit` (optional): Items per page (default: 10)
-- `status` (optional): `active` or `inactive`
+Auth is proxied to IAM. The supported path family is `POST /api/auth/*` and `GET /api/auth/me`.
 
-## 📝 Blog API
+Important:
 
-### Get Published Blogs
-```http
-GET /api/blogs?page=1&limit=10&category=tech&search=web
-```
+- New integrations should use `GET /api/auth/me` to validate a session.
+- Do not rely on `/api/auth/token/verify`; the current IAM controller does not implement it.
 
-**Query Parameters:**
-- `page` (optional): Page number
-- `limit` (optional): Items per page
-- `category` (optional): Filter by category
-- `tag` (optional): Filter by tag
-- `search` (optional): Search in title, excerpt, content
+### Checkout and provisioning
 
-### Get Blog by Slug
-```http
-GET /api/blogs/getting-started-web-development
-```
+Public checkout is:
 
-**Features:**
-- Increments view count automatically
-- Only returns published blogs
-- Includes author information
+1. `GET /api/payments/methods`
+2. `POST /api/payments/initiate`
+3. `POST /api/payments/verify`
 
-### Create Blog (Admin Only)
-```http
-POST /api/blogs
-Authorization: Bearer <token>
-Content-Type: application/json
+The verify step triggers downstream provisioning through `utils/productProvisioner.js`. For the EasyDev Communication product that means:
 
-{
-  "title": "Getting Started with Modern Web Development",
-  "slug": "getting-started-modern-web-development",
-  "content": "<p>Full blog content...</p>",
-  "excerpt": "Brief description of the blog post",
-  "featuredImage": "https://example.com/image.jpg",
-  "categories": ["web-development", "tutorial"],
-  "tags": ["javascript", "react", "nodejs"],
-  "isPublished": true
-}
-```
+- create the product-side account in the AI Communication backend
+- provision or resolve the shared IAM user
+- link the IAM user back to the AI Communication business
 
-### Update Blog (Admin Only)
-```http
-PUT /api/blogs/{blogId}
-Authorization: Bearer <token>
-Content-Type: application/json
+### AI Communication launch
 
-{
-  "title": "Updated Title",
-  "isPublished": false
-}
-```
+Authenticated users open the product with `GET /api/communication/launch`. The gateway generates an IAM SSO token and returns a product launch URL.
 
-### Delete Blog (Admin Only)
-```http
-DELETE /api/blogs/{blogId}
-Authorization: Bearer <token>
-```
+## Common Mistakes To Avoid
 
-**Note:** Uses soft delete (sets `isDeleted: true`)
+- Pointing the frontend directly at IAM or AI Communication instead of this gateway.
+- Running IAM on `3000` and forgetting to update `AUTH_SERVICE_URL`.
+- Assuming this repo still proxies lead flows to a separate lead microservice. The current code owns `/api/leads/*` locally.
+- Treating payment verify as a confirmation-only step. It is also the provisioning trigger.
+- Using `/api/auth/token/verify` in new clients.
 
-## 📞 Contact API
+## Verification Checklist
 
-### Submit Contact Form
-```http
-POST /api/contact
-Content-Type: application/json
+After wiring the environment, verify these endpoints in order:
 
-{
-  "name": "John Doe",
-  "email": "john@example.com",
-  "phone": "+1234567890",
-  "company": "Acme Corp",
-  "subject": "Website Development Inquiry",
-  "message": "I'm interested in your web development services..."
-}
-```
+1. `GET /api/health`
+2. `GET /api/ready`
+3. `GET /api/payments/methods`
+4. `POST /api/leads/submit`
+5. `POST /api/newsletter/subscribe`
+6. `POST /api/auth/login`
+7. `GET /api/auth/me`
+8. `GET /api/payments/subscriptions`
+9. `GET /api/communication/launch`
 
-**Features:**
-- Sends notification email to admin
-- Sends confirmation email to user
-- Captures IP address and user agent
-- Auto-assigns priority and status
+## Deeper Reference
 
-### Get Contacts (Admin Only)
-```http
-GET /api/contact?page=1&limit=10&status=new&priority=high
-Authorization: Bearer <token>
-```
-
-**Query Parameters:**
-- `page`, `limit`: Pagination
-- `status`: `new`, `read`, `replied`, `closed`
-- `priority`: `low`, `medium`, `high`
-
-### Get Contact by ID (Admin Only)
-```http
-GET /api/contact/{contactId}
-Authorization: Bearer <token>
-```
-
-**Features:**
-- Automatically marks contact as "read" if status was "new"
-
-## 🔍 Inquiry API
-
-### Submit Project Inquiry
-```http
-POST /api/inquiry
-Content-Type: application/json
-
-{
-  "name": "Jane Smith",
-  "email": "jane@example.com",
-  "phone": "+1234567890",
-  "company": "Tech Startup Inc",
-  "projectType": "webapp",
-  "budget": "25k-50k",
-  "timeline": "3-6months",
-  "description": "We need a comprehensive web application...",
-  "requirements": ["User Authentication", "Payment Gateway", "Admin Dashboard"]
-}
-```
-
-**Project Types:**
-- `website` - Static/Dynamic websites
-- `webapp` - Web applications
-- `mobile` - Mobile applications
-- `ecommerce` - E-commerce solutions
-- `other` - Other projects
-
-**Budget Ranges:**
-- `under-5k`, `5k-10k`, `10k-25k`, `25k-50k`, `over-50k`
-
-**Timeline Options:**
-- `asap`, `1-month`, `2-3months`, `3-6months`, `flexible`
-
-### Get Inquiries (Admin Only)
-```http
-GET /api/inquiry?page=1&limit=10&status=new&projectType=webapp
-Authorization: Bearer <token>
-```
-
-**Query Parameters:**
-- `status`: `new`, `reviewing`, `quoted`, `accepted`, `rejected`, `completed`
-- `projectType`: Filter by project type
-- `priority`: Filter by priority level
-
-### Get Inquiry by ID (Admin Only)
-```http
-GET /api/inquiry/{inquiryId}
-Authorization: Bearer <token>
-```
-
-**Features:**
-- Automatically marks inquiry as "reviewing" if status was "new"
-- Includes populated assignedTo and notes data
-
-## 💼 Plans API
-
-### Get All Plans
-```http
-GET /api/plans?category=website&billingCycle=monthly
-```
-
-**Query Parameters:**
-- `category`: `website`, `maintenance`, `hosting`, `consulting`
-- `billingCycle`: `monthly`, `yearly`, `one-time`
-
-### Create Plan (Admin Only)
-```http
-POST /api/plans
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "name": "Professional Website",
-  "slug": "professional-website",
-  "description": "Complete professional website with custom design",
-  "price": 2999,
-  "currency": "USD",
-  "billingCycle": "one-time",
-  "category": "website",
-  "features": [
-    {
-      "name": "Custom Design",
-      "included": true,
-      "description": "Fully custom website design"
-    }
-  ],
-  "isPopular": true,
-  "isActive": true,
-  "order": 1
-}
-```
-
-### Update Plan (Admin Only)
-```http
-PUT /api/plans/{planId}
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "price": 3499,
-  "isPopular": false
-}
-```
-
-## 📧 Email Integration
-
-The API integrates with your email service at `localhost:3000/send-email` using template-based emails.
-
-### Email Templates Used
-
-| Template ID | Purpose | Trigger |
-|-------------|---------|---------|
-| `NEWSLETTER_WELCOME` | Welcome new subscribers | Newsletter subscription |
-| `CONTACT_NOTIFICATION` | Notify admin of new contact | Contact form submission |
-| `CONTACT_CONFIRMATION` | Confirm contact submission | Contact form submission |
-| `INQUIRY_NOTIFICATION` | Notify admin of new inquiry | Project inquiry submission |
-| `INQUIRY_CONFIRMATION` | Confirm inquiry submission | Project inquiry submission |
-
-### Email Payload Format
-```json
-{
-  "to": "recipient@example.com",
-  "templateId": "NEWSLETTER_WELCOME",
-  "data": {
-    "name": "John Doe",
-    "email": "john@example.com",
-    "companyName": "Web Agency"
-  }
-}
-```
-
-## 🔒 Security Features
-
-- **JWT Authentication** with configurable expiration
-- **Rate Limiting** (100 requests per 15 minutes per IP)
-- **CORS Protection** with configurable origins
-- **Helmet.js** for security headers
-- **Input Sanitization** against XSS attacks
-- **MongoDB Injection Protection**
-- **Request Logging** for audit trails
-
-## 📊 Response Format
-
-### Success Response
-```json
-{
-  "success": true,
-  "message": "Operation completed successfully",
-  "data": {
-    // Response data
-  }
-}
-```
-
-### Error Response
-```json
-{
-  "success": false,
-  "message": "Descriptive error message",
-  "errors": [
-    {
-      "field": "email",
-      "message": "Please provide a valid email address",
-      "value": "invalid-email"
-    }
-  ]
-}
-```
-
-### Pagination Response
-```json
-{
-  "success": true,
-  "message": "Data retrieved successfully",
-  "data": {
-    "items": [...],
-    "pagination": {
-      "total": 100,
-      "page": 1,
-      "limit": 10,
-      "totalPages": 10,
-      "hasNextPage": true,
-      "hasPrevPage": false,
-      "nextPage": 2,
-      "prevPage": null
-    }
-  }
-}
-```
-
-## 🧪 Testing with Postman
-
-1. **Import Collection**
-   - Import `postman/Web-Agency-API.postman_collection.json`
-   - Import `postman/Web-Agency-API.postman_environment.json`
-
-2. **Set Environment**
-   - Select "Web Agency API Environment"
-   - Update `baseUrl` if different from localhost:3000
-
-3. **Authenticate**
-   - Run "Admin Login" request
-   - Token will be automatically saved to environment
-
-4. **Test Endpoints**
-   - All requests are pre-configured with proper headers
-   - Variables are used for dynamic values (IDs, tokens)
-
-## 📁 Project Structure
-
-```
-├── config/
-│   ├── database.js          # MongoDB connection
-│   └── jwt.js               # JWT configuration
-├── middleware/
-│   ├── auth.js              # Authentication middleware
-│   ├── errorHandler.js      # Global error handling
-│   ├── requestLogger.js     # Request logging
-│   └── validation.js        # Input validation
-├── models/
-│   ├── Admin.js             # Admin user model
-│   ├── Blog.js              # Blog post model
-│   ├── Contact.js           # Contact form model
-│   ├── Inquiry.js           # Project inquiry model
-│   ├── Newsletter.js        # Newsletter subscription model
-│   └── Plan.js              # Service plan model
-├── routes/
-│   ├── auth.js              # Authentication routes
-│   ├── blog.js              # Blog management routes
-│   ├── contact.js           # Contact form routes
-│   ├── inquiry.js           # Project inquiry routes
-│   ├── newsletter.js        # Newsletter routes
-│   └── plans.js             # Service plans routes
-├── scripts/
-│   └── createAdmin.js       # Admin user creation script
-├── utils/
-│   ├── email.js             # Email service integration
-│   ├── logger.js            # Winston logger configuration
-│   └── pagination.js       # Pagination utilities
-├── validation/
-│   ├── authValidation.js    # Auth input validation
-│   ├── blogValidation.js    # Blog input validation
-│   ├── contactValidation.js # Contact input validation
-│   ├── inquiryValidation.js # Inquiry input validation
-│   ├── newsletterValidation.js # Newsletter validation
-│   └── planValidation.js    # Plan input validation
-├── postman/
-│   ├── Web-Agency-API.postman_collection.json
-│   └── Web-Agency-API.postman_environment.json
-├── logs/                    # Application logs
-├── .env.example             # Environment variables template
-├── package.json
-├── server.js                # Main application file
-└── README.md
-```
-
-## 🚀 Deployment
-
-### Environment Variables for Production
-```env
-NODE_ENV=production
-PORT=3000
-MONGODB_URI=mongodb://your-production-db
-JWT_SECRET=your-super-secure-production-secret
-FRONTEND_URL=https://your-frontend-domain.com
-ADMIN_EMAIL=admin@yourdomain.com
-ADMIN_PASSWORD=secure-admin-password
-```
-
-### Production Considerations
-
-1. **Database**
-   - Use MongoDB Atlas or dedicated MongoDB server
-   - Enable authentication and SSL
-   - Set up regular backups
-
-2. **Security**
-   - Use strong JWT secret (32+ characters)
-   - Enable HTTPS
-   - Configure proper CORS origins
-   - Set up firewall rules
-
-3. **Monitoring**
-   - Monitor application logs
-   - Set up health check endpoints
-   - Configure error alerting
-
-4. **Performance**
-   - Enable MongoDB indexing
-   - Configure connection pooling
-   - Set up caching if needed
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **MongoDB Connection Failed**
-   ```
-   Error: connect ECONNREFUSED 127.0.0.1:27017
-   ```
-   - Ensure MongoDB is running
-   - Check MONGODB_URI in .env file
-
-2. **JWT Token Invalid**
-   ```
-   {"success": false, "message": "Invalid token"}
-   ```
-   - Check if token is properly included in Authorization header
-   - Verify JWT_SECRET matches between login and verification
-
-3. **Email Service Unavailable**
-   ```
-   Email sending failed: connect ECONNREFUSED
-   ```
-   - Ensure email service is running on localhost:3000/send-email
-   - Check email service logs
-
-4. **Validation Errors**
-   ```
-   {"success": false, "message": "Validation failed"}
-   ```
-   - Check request body format
-   - Ensure required fields are included
-   - Verify data types match validation rules
-
-### Debug Mode
-Set `NODE_ENV=development` for detailed error messages and console logging.
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## 📞 Support
-
-For support and questions:
-- Create an issue in the repository
-- Check the API documentation at `/api-docs`
-- Review the Postman collection for examples
+See `docs/API.md` for the current route catalog, request examples, and end-to-end workflows.

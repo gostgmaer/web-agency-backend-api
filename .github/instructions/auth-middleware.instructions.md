@@ -6,11 +6,11 @@ applyTo: "routes/**,middleware/auth.js"
 
 ## How auth works in this service
 
-JWTs are issued exclusively by the **user-auth-service** (port 4002, source: `../user-auth-service`). This service only **verifies** them.
+JWTs are issued exclusively by the shared IAM service in `../multi-tannet-auth-services`. This service only **verifies** them.
 
 The `authenticate` middleware in `middleware/auth.js`:
 1. Extracts the `Bearer` token from the `Authorization` header.
-2. Verifies the signature against `JWT_ACCESS_SECRET` (must equal `JWT_ACCESS_SECRET` from user-auth-service).
+2. Verifies the signature against `JWT_ACCESS_SECRET` (must equal `JWT_SECRET` in the IAM service).
 3. Validates `iss === 'user-auth-service'` and `aud === 'dashboard-app'` claims.
 4. Attaches a normalized `req.user` object from the decoded payload.
 5. **No database call.** No call to the auth service. Stateless verification only.
@@ -19,7 +19,7 @@ The `authenticate` middleware in `middleware/auth.js`:
 
 ```js
 req.user = {
-  id: decoded.sub,        // MongoDB ObjectId string (the 'sub' claim from user-auth-service)
+  id: decoded.sub,        // User id from the IAM access token
   email: decoded.email,
   role: decoded.role,     // e.g. 'admin', 'super_admin', 'user'
   tenantId: decoded.tenantId,
@@ -68,14 +68,19 @@ jwt.verify(token, process.env.JWT_SECRET);
 
 ## Where admin login happens
 
-Direct all login requests to the **user-auth-service** (`AUTH_SERVICE_URL` env var, port 4002):
+Direct all login requests to the shared IAM service behind `AUTH_SERVICE_URL`.
+
+Recommended local target in this workspace:
+
+```text
+AUTH_SERVICE_URL=http://localhost:3100
+```
 
 | Action | Endpoint |
 |---|---|
 | Login | `POST /api/auth/login` |
-| MFA completion | `POST /api/auth/login/mfa` |
-| Refresh token | `POST /api/auth/token/refresh` |
-| Verify token | `GET /api/auth/token/verify` |
+| Account check | `POST /api/auth/check` |
+| Refresh token | `POST /api/auth/refresh` |
 | Logout | `POST /api/auth/logout` |
 | Get own profile | `GET /api/auth/me` |
 

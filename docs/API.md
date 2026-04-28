@@ -1,800 +1,485 @@
-# Web Agency Backend API — Documentation
+# Web Agency Backend API Reference
 
-## Table of Contents
+This document is the current integration contract for `web-agency-backend-api`.
 
-1. [Overview](#1-overview)
-2. [Base URL & Environments](#2-base-url--environments)
-3. [Architecture — How Microservices Are Used](#3-architecture--how-microservices-are-used)
-4. [Running the Service](#4-running-the-service)
-5. [Environment Variables](#5-environment-variables)
-6. [Authentication](#6-authentication)
-7. [Request & Response Format](#7-request--response-format)
-8. [Rate Limiting](#8-rate-limiting)
-9. [Routes Reference](#9-routes-reference)
-   - [System](#91-system)
-   - [Auth — Public](#92-auth--public-proxied)
-   - [Auth — Protected](#93-auth--protected-proxied)
-   - [Admin](#94-admin-proxied)
-   - [Leads / Contact & Inquiry Forms](#95-leads--contact--inquiry-forms-proxied)
-   - [Files](#96-files-proxied)
-   - [Newsletter](#97-newsletter-owned)
-   - [Upload — Proposal HTML](#98-upload--proposal-html-owned)
-   - [Budget Calculator](#99-budget-calculator-owned)
-10. [Error Codes](#10-error-codes)
-11. [End-to-End Workflows](#11-end-to-end-workflows)
-12. [Postman Collection](#12-postman-collection)
+## Base URL
 
----
-
-## 1. Overview
-
-**web-agency-backend-api** is the public-facing API gateway for the web agency website. It serves as the **single base URL** for all frontend requests and either handles them directly or proxies them to the appropriate downstream microservice.
-
-### What this service owns
-| Area | Storage |
-|---|---|
-| Newsletter subscriptions (double opt-in lifecycle) | MongoDB |
-| Proposal HTML file uploads (local disk) | Local filesystem |
-| **Budget / cost calculator** (stateless, no DB) | In-memory |
-| Health / readiness probes | In-memory |
-
-### What this service proxies (no logic added)
-| Traffic | Downstream service |
-|---|---|
-| Authentication, sessions, user profiles | **user-auth-service** |
-| Contact forms, project inquiries, CRM pipeline | **lead-microservice** |
-| File storage (cloud/S3/GCS) | **file-upload-service** |
-
----
-
-## 2. Base URL & Environments
-
-| Environment | Base URL |
-|---|---|
-| Local development | `http://localhost:3500` |
-| Staging | `https://api-staging.yoursite.com` |
-| Production | `https://api.yoursite.com` |
-
-> All API endpoints are prefixed with `/api`.
-
----
-
-## 3. Architecture — How Microservices Are Used
-
-```
-Browser / Mobile App
-        │
-        ▼ (single origin)
-┌─────────────────────────────────────────────────┐
-│         web-agency-backend-api  :3500            │
-│                                                   │
-│  Owned routes:                                    │
-│    /api/calculator/*   ──► in-process (stateless) │
-│    /api/newsletter/*   ──► MongoDB               │
-│    /api/upload/*       ──► local disc             │
-│    /api/health         ──► in-process             │
-│                                                   │
-│  Proxy routes (transparent pass-through):         │
-│    /api/auth/*   ──────────────────────────────► user-auth-service :4002   │
-│    /api/admin/*  ──────────────────────────────► user-auth-service :4002   │
-│    /api/leads/*  ──────────────────────────────► lead-microservice         │
-│    /api/files/*  ──────────────────────────────► file-upload-service :4001 │
-└─────────────────────────────────────────────────┘
+```text
+Local: http://localhost:3500/api
 ```
 
-### Key design rules
+Use the gateway as the only browser-facing base URL.
 
-- **Contact forms and project inquiries** both submit to `POST /api/leads/submit` on the lead-microservice. Use the `category` field to distinguish them. The lead-microservice owns all CRM pipeline logic, email notifications, and storage for leads.
-- **JWT tokens are issued exclusively by user-auth-service.** This gateway only *verifies* tokens using the shared `JWT_ACCESS_SECRET`. It never creates or revokes tokens.
-- **All outgoing email** goes through the email-microservice. This service never calls SMTP directly.
-- **File persistence** for cloud/S3 storage goes through the file-upload-service (`/api/files/upload`). The only local files are proposal HTML pages under `/uploads/proposals/`.
+## Recommended Local Topology
 
----
-
-## 4. Running the Service
-
-### Prerequisites
-- Node.js 18+
-- pnpm (or npm/yarn)
-- MongoDB instance (only needed for the newsletter feature)
-- At least one downstream microservice running (or set their URL to trigger the 503 fallback gracefully)
-
-### Install dependencies
-```bash
-pnpm install
-```
-
-### Start (development — with hot reload)
-```bash
-pnpm dev
-```
-
-### Start (production)
-```bash
-pnpm start
-```
-
-### Start (cluster mode — one worker per CPU)
-```bash
-pnpm start:cluster
-```
-
-### Port
-Defaults to **3500**. Override with `PORT` env var.
-
----
-
-## 5. Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
-# ── Service ────────────────────────────────────────────────
-PORT=3500
-NODE_ENV=development
-
-# Frontend URL (used to build newsletter confirmation/unsubscribe links)
-FRONTEND_URL=https://yoursite.com
-
-# Comma-separated list of allowed CORS origins
-CORS_ORIGINS=https://yoursite.com,https://admin.yoursite.com
-
-# ── Database ───────────────────────────────────────────────
-# Only required for the newsletter feature
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/web-agency
-
-# ── JWT ────────────────────────────────────────────────────
-# MUST match JWT_ACCESS_SECRET in the user-auth-service
-JWT_ACCESS_SECRET=your-shared-secret-here
-JWT_ISSUER=user-auth-service
-JWT_AUDIENCE=dashboard-app
-
-# ── Microservice URLs ──────────────────────────────────────
-EMAIL_SERVICE_URL=http://localhost:4000
-AUTH_SERVICE_URL=http://localhost:4002
-LEAD_SERVICE_URL=http://localhost:4003
-FILE_UPLOAD_SERVICE_URL=http://localhost:4001
-
-# ── Admin ──────────────────────────────────────────────────
-ADMIN_EMAIL=admin@yoursite.com
-
-# ── Optional ───────────────────────────────────────────────
-LOG_LEVEL=debug            # debug | info | warn | error
-ENABLE_LOGGING=true
-CLUSTER_MODE=false         # set true to use all CPU cores
-REQUEST_TIMEOUT=30000      # ms
-SHUTDOWN_TIMEOUT=10000     # ms
-```
-
-> If `AUTH_SERVICE_URL`, `LEAD_SERVICE_URL`, or `FILE_UPLOAD_SERVICE_URL` is not set, the corresponding proxy path returns a `503 Service Unavailable` gracefully instead of crashing.
-
----
-
-## 6. Authentication
-
-### How it works
-
-1. The frontend calls `POST /api/auth/login` → receives `accessToken` + `refreshToken`.
-2. The frontend includes `Authorization: Bearer <accessToken>` on every protected request.
-3. This gateway verifies the token signature using `JWT_ACCESS_SECRET` (stateless — no DB lookup, no call to the auth service).
-4. `req.user` is populated with `{ id, email, role, tenantId, sessionId }` from the token claims.
-5. When the token expires (401 `Token has expired`), call `POST /api/auth/token/refresh`.
-
-### Token claims
-```json
-{
-  "sub": "<userId>",
-  "email": "user@example.com",
-  "role": "admin",
-  "tenantId": "<tenantId>",
-  "sessionId": "<sessionId>",
-  "iss": "user-auth-service",
-  "aud": "dashboard-app"
-}
-```
-
-### Error responses
-| Status | Message | Cause |
+| Service | Port | Why it matters here |
 |---|---|---|
-| `401` | `Access denied. No token provided` | Missing `Authorization` header |
-| `401` | `Invalid token` | Malformed / wrong secret |
-| `401` | `Token has expired` | Token past its expiry |
+| `easydev` | `3000` | browser client |
+| `multi-tannet-auth-services` | `3100` | `AUTH_SERVICE_URL` |
+| `payment-microservice` | `3200` | `PAYMENT_SERVICE_URL` |
+| `ai automation communication` backend | `3001` | `COMMUNICATION_URL` |
+| `ai automation communication` frontend | `3002` | launch target from `/communication/launch` |
+| `web-agency-backend-api` | `3500` | gateway itself |
 
----
+## Response Envelope
 
-## 7. Request & Response Format
+The gateway injects metadata into most JSON responses:
 
-### Request headers for protected routes
-```
-Authorization: Bearer <accessToken>
-Content-Type: application/json
-```
-
-### Standard response envelope
-All responses (success and error) follow this shape:
 ```json
 {
   "success": true,
   "message": "Human-readable message",
-  "data": {}
+  "data": {},
+  "timestamp": "2026-04-28T12:00:00.000Z",
+  "requestId": "...",
+  "statusCode": 200,
+  "status": "success"
 }
 ```
 
-### Error response
+Error example:
+
 ```json
 {
   "success": false,
-  "message": "Validation failed",
-  "errors": [
-    { "field": "email", "message": "Please provide a valid email address" }
-  ]
+  "message": "Payment service is not configured on this server.",
+  "timestamp": "2026-04-28T12:00:00.000Z",
+  "requestId": "...",
+  "statusCode": 503,
+  "status": "error"
 }
 ```
 
----
+## Authentication Model
 
-## 8. Rate Limiting
+### Public routes
 
-- **Limit:** 200 requests per minute per IP
-- **Window:** 60 seconds
-- **Excluded:** `GET /api/health`
-- **Headers returned:** `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`
-- **When exceeded (429):**
-```json
-{
-  "success": false,
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Too many requests from this IP. Please wait a moment and try again."
-  }
-}
+No bearer token required.
+
+### Protected routes
+
+Send:
+
+```http
+Authorization: Bearer <accessToken>
 ```
 
----
+The gateway verifies access tokens locally with `JWT_ACCESS_SECRET` and also forwards the same bearer token to proxied IAM, payment, and AI Communication endpoints when required.
 
-## 9. Routes Reference
+### Tenant header
 
-### 9.1 System
+For public tenant-scoped routes, send:
 
-#### `GET /api/health`
-Returns service status. No auth required.
-
-**Response `200`:**
-```json
-{
-  "success": true,
-  "message": "Server is running successfully",
-  "data": {
-    "status": "healthy",
-    "timestamp": "2026-03-07T10:00:00.000Z",
-    "uptime": 3600,
-    "environment": "development",
-    "version": "1.0.0",
-    "memory": { "heapUsed": "45MB", "heapTotal": "64MB", "rss": "80MB" },
-    "pid": 12345
-  }
-}
+```http
+x-tenant-id: easydev
 ```
 
----
+If the client omits it and `TENANT_ID` is configured on the gateway, the gateway injects its fallback tenant automatically.
 
-#### `GET /api/ready`
-Returns `200` only when MongoDB is connected. Use for load-balancer probes.
+## System Routes
 
-**Response `200`:** `{ "success": true, "message": "Service is ready" }`  
-**Response `503`:** `{ "success": false, "message": "Service is not ready" }`
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/health` | local service health |
+| `GET` | `/ready` | MongoDB readiness check |
+| `GET` | `/platform-health` | aggregated upstream status |
+| `GET` | `/postman-collection` | returns the Postman collection file |
 
----
+## IAM Proxy Surface
 
-#### `GET /api/postman-collection`
-Returns the Postman collection JSON file. Import directly into Postman.
+These prefixes are forwarded to IAM:
 
----
+| Gateway prefix | IAM target prefix |
+|---|---|
+| `/auth/*` | `/api/v1/iam/auth/*` |
+| `/rbac/*` | `/api/v1/iam/rbac/*` |
+| `/users/*` | `/api/v1/iam/users/*` |
+| `/tenants/*` | `/api/v1/iam/tenants/*` |
+| `/sessions/*` | `/api/v1/iam/sessions/*` |
+| `/iam/health` | `/api/v1/iam/health` |
+| `/iam/logs/*` | `/api/v1/iam/logs/*` |
+| `/iam/stats/*` | `/api/v1/iam/stats/*` |
+| `/iam/security/*` | `/api/v1/iam/security/*` |
+| `/iam/api-keys/*` | `/api/v1/iam/api-keys/*` |
+| `/iam/webhooks/*` | `/api/v1/iam/webhooks/*` |
+| `/iam/flags/*` | `/api/v1/iam/feature-flags/*` |
+| `/iam/apps/*` | `/api/v1/iam/apps/*` |
+| `/iam/settings/*` | `/api/v1/iam/settings/*` |
+| `/admin/*` | legacy alias to IAM users routes |
 
-### 9.2 Auth — Public (Proxied)
+Supported auth calls for new clients:
 
-> **Proxied to:** `AUTH_SERVICE_URL/api/auth/*`  
-> No authentication required.
+- `POST /auth/register`
+- `POST /auth/register/send-verification`
+- `POST /auth/register/verify`
+- `POST /auth/check`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `POST /auth/logout-all`
+- `POST /auth/refresh`
+- `GET /auth/me`
+- `POST /auth/otp/send`
+- `POST /auth/otp/verify`
+- `POST /auth/magic-link/send`
+- `POST /auth/magic-link/verify`
+- `POST /auth/password/forgot`
+- `POST /auth/password/reset`
+- `POST /auth/password/change`
+- `POST /auth/password/bootstrap-change`
+- `POST /auth/social/login`
+- `POST /auth/social/link`
+- `DELETE /auth/social/unlink/:provider`
+- `GET /auth/social/accounts`
+- `GET /auth/social/:provider`
+- `GET /auth/social/:provider/callback`
 
-#### `POST /api/auth/register`
-Register a new user account.
+Avoid for new integrations:
 
-**Body:**
-```json
+- `GET /auth/token/verify`
+
+That path is still present in some client helpers but is not implemented by the current IAM controller.
+
+## Leads API
+
+The lead module is owned by this repo.
+
+### Public routes
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/leads/health` | module health |
+| `POST` | `/leads/submit` | public submit, requires `x-tenant-id` |
+| `GET` | `/leads/:id/proposal/view/:version` | public proposal view tracking |
+
+Public submit example:
+
+```http
+POST /api/leads/submit
+x-tenant-id: easydev
+Content-Type: application/json
+
 {
   "firstName": "Jane",
   "lastName": "Doe",
-  "email": "jane.doe@example.com",
-  "password": "Password123!"
-}
-```
-
----
-
-#### `POST /api/auth/login`
-Login. Returns access and refresh tokens.
-
-**Body:**
-```json
-{
-  "email": "jane.doe@example.com",
-  "password": "Password123!"
-}
-```
-
-**Response `200`:**
-```json
-{
-  "success": true,
-  "data": {
-    "accessToken": "eyJhbGc...",
-    "refreshToken": "eyJhbGc..."
-  }
-}
-```
-
----
-
-#### `POST /api/auth/login/mfa`
-Complete an MFA challenge after login.
-
-**Body:** `{ "email": "...", "otpCode": "123456" }`
-
----
-
-#### `POST /api/auth/token/refresh`
-Exchange a refresh token for a new access token.
-
-**Body:** `{ "refreshToken": "<refreshToken>" }`
-
----
-
-#### `GET /api/auth/token/verify`
-Verify whether the current bearer token is valid (uses collection-level auth).
-
----
-
-#### `POST /api/auth/email/verify`
-Verify email address using a one-time code.
-
-**Body:** `{ "email": "...", "otp": "123456" }`
-
----
-
-#### `POST /api/auth/email/resend`
-Resend the email verification OTP.
-
-**Body:** `{ "email": "..." }`
-
----
-
-#### `POST /api/auth/password/forgot`
-Request a password reset email.
-
-**Body:** `{ "email": "..." }`
-
----
-
-#### `POST /api/auth/password/reset`
-Complete a password reset using the token from email.
-
-**Body:** `{ "token": "reset-token-from-email", "newPassword": "NewPassword123!" }`
-
----
-
-#### `POST /api/auth/otp/verify`
-Verify an OTP code.
-
-**Body:** `{ "email": "...", "otp": "123456" }`
-
----
-
-#### `POST /api/auth/otp/resend`
-Resend an OTP.
-
-**Body:** `{ "email": "..." }`
-
----
-
-#### `POST /api/auth/account/unlock/request`
-Request an account unlock email after too many failed logins.
-
-**Body:** `{ "email": "..." }`
-
----
-
-#### `POST /api/auth/account/unlock/confirm`
-Confirm account unlock using the token from the email.
-
-**Body:** `{ "token": "unlock-token-from-email" }`
-
----
-
-#### `POST /api/auth/social/login`
-Login/register using a social OAuth provider.
-
-**Body:** `{ "provider": "google", "idToken": "google-id-token" }`
-
----
-
-### 9.3 Auth — Protected (Proxied)
-
-> **Proxied to:** `AUTH_SERVICE_URL/api/auth/*`  
-> Requires `Authorization: Bearer <accessToken>`
-
-#### `GET /api/auth/me`
-Returns the profile of the currently authenticated user.
-
----
-
-#### `PATCH /api/auth/me`
-Update profile fields.
-
-**Body (all optional):**
-```json
-{
-  "firstName": "Jane",
-  "lastName": "Smith",
-  "phone": "+1234567890"
-}
-```
-
----
-
-#### `POST /api/auth/password/change`
-Change password while logged in.
-
-**Body:** `{ "currentPassword": "...", "newPassword": "..." }`
-
----
-
-#### `POST /api/auth/logout`
-Revoke the current session and invalidate both tokens.
-
----
-
-#### `GET /api/auth/social/accounts`
-List all OAuth providers linked to the current account.
-
----
-
-#### `POST /api/auth/social/link`
-Link a new social provider to the current account.
-
-**Body:** `{ "provider": "github", "idToken": "..." }`
-
----
-
-#### `DELETE /api/auth/social/unlink/:provider`
-Unlink a social provider. `:provider` = `google` | `github` | `facebook`
-
----
-
-### 9.4 Admin (Proxied)
-
-> **Proxied to:** `AUTH_SERVICE_URL/api/admin/*`  
-> Requires Bearer token with `role: admin` or `role: super_admin`
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/admin/users/:userId/unlock` | Force-unlock a locked user account |
-| `GET` | `/api/admin/sessions` | List all active sessions |
-| `DELETE` | `/api/admin/sessions/:sessionId` | Force-revoke a specific session |
-| `GET` | `/api/admin/logs` | View authentication activity logs |
-| `GET` | `/api/admin/analytics` | View authentication analytics |
-
----
-
-### 9.5 Leads / Contact & Inquiry Forms (Proxied)
-
-> **Proxied to:** `LEAD_SERVICE_URL/api/leads/*`  
-> Public submit requires `x-tenant-id` header. Admin routes require Bearer token.
-
-**Contact forms and project inquiries use the same endpoint.** The `category` field distinguishes them:
-
-| Form type | `category` value | Extra fields |
-|---|---|---|
-| General contact message | `General Inquiry` | — |
-| Project estimate / inquiry | `Sales` | `projectType`, `budget`, `timeline` |
-
-#### `POST /api/leads/submit` — Public
-Submit a contact form or project inquiry.
-
-**Required header:** `x-tenant-id: <your-tenant-id>`
-
-**Body:**
-```json
-{
-  "firstName": "John",
-  "lastName": "Smith",
-  "email": "john.smith@example.com",
-  "subject": "Website enquiry",
-  "message": "I'd like to know more about your services.",
-  "gdprConsent": true,
-  "category": "General Inquiry",
-
-  "phone": "+1234567890",
-  "preferredContactMethod": "email"
-}
-```
-
-**Body — Project Inquiry (same endpoint, different fields):**
-```json
-{
-  "firstName": "Sarah",
-  "lastName": "Johnson",
-  "email": "sarah@acme.com",
-  "subject": "E-commerce platform",
-  "message": "We need a full e-commerce site built from scratch.",
+  "email": "jane@example.com",
+  "phone": "+15550100",
+  "subject": "Website redesign",
+  "message": "We need a full redesign and maintenance plan.",
   "gdprConsent": true,
   "category": "Sales",
-
-  "phone": "+1987654321",
-  "projectType": "ecommerce",
-  "budget": "25k-50k",
-  "timeline": "3-6months",
-  "website": "https://acme.com",
-  "preferredContactMethod": "email"
+  "projectType": "redesign",
+  "budget": "10k-25k",
+  "timeline": "2-3months",
+  "preferredContactMethod": "email",
+  "website": "https://example.com"
 }
 ```
 
-**`projectType` values:** `website` | `webapp` | `mobile` | `ecommerce` | `redesign` | `maintenance` | `consulting` | `other`  
-**`budget` values:** `under-5k` | `5k-10k` | `10k-25k` | `25k-50k` | `50k-100k` | `over-100k` | `not-sure`  
-**`timeline` values:** `asap` | `1-month` | `2-3months` | `3-6months` | `6months+` | `flexible`
+### Authenticated routes
 
----
+| Method | Path |
+|---|---|
+| `GET` | `/leads/stats` |
+| `GET` | `/leads/proposals/stats` |
+| `GET` | `/leads/proposals/expiring` |
+| `GET` | `/leads` |
+| `GET` | `/leads/export` |
+| `GET` | `/leads/search` |
+| `GET` | `/leads/follow-up` |
+| `POST` | `/leads/bulk-update` |
+| `POST` | `/leads/bulk-delete` |
+| `POST` | `/leads/import` |
+| `GET` | `/leads/spam` |
+| `POST` | `/leads/proposals/expire-check` |
+| `GET` | `/leads/:id` |
+| `PATCH` | `/leads/:id` |
+| `DELETE` | `/leads/:id` |
+| `GET` | `/leads/:id/score` |
+| `POST` | `/leads/:id/notes` |
+| `POST` | `/leads/:id/contact` |
+| `POST` | `/leads/:id/proposal` |
+| `POST` | `/leads/:id/proposal/resend` |
+| `POST` | `/leads/:id/proposal/revise` |
+| `PATCH` | `/leads/:id/proposal/accept` |
+| `PATCH` | `/leads/:id/proposal/decline` |
+| `GET` | `/leads/:id/proposal/history` |
+| `GET` | `/leads/:id/proposal/:version` |
+| `POST` | `/leads/:id/contract` |
+| `PATCH` | `/leads/:id/contract/signed` |
+| `PATCH` | `/leads/:id/status` |
+| `PATCH` | `/leads/:id/hold` |
+| `PATCH` | `/leads/:id/reopen` |
+| `PATCH` | `/leads/:id/won` |
+| `PATCH` | `/leads/:id/lost` |
+| `POST` | `/leads/:id/attachments` |
+| `DELETE` | `/leads/:id/attachments/:fileId` |
+| `PATCH` | `/leads/:id/spam` |
+| `DELETE` | `/leads/:id/hard-delete` |
+| `PATCH` | `/leads/:id/reopen-admin` |
 
-#### Admin CRM routes (require Bearer token)
+## Newsletter API
 
-| Method | Path | Description |
+Newsletter is MongoDB-backed and owned by this repo.
+
+| Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/leads` | List leads with filters (`status`, `assignedTo`, `page`, `limit`) |
-| `GET` | `/api/leads/stats` | Pipeline statistics |
-| `GET` | `/api/leads/search?q=` | Full-text search |
-| `GET` | `/api/leads/export` | Export to CSV |
-| `GET` | `/api/leads/follow-up` | Leads due for follow-up |
-| `POST` | `/api/leads/bulk-update` | Bulk status/assignment update |
-| `POST` | `/api/leads/import` | Import from CSV |
-| `GET` | `/api/leads/:id` | Get a single lead |
-| `PATCH` | `/api/leads/:id` | Update lead fields |
-| `DELETE` | `/api/leads/:id` | Soft-delete lead |
-| `POST` | `/api/leads/:id/notes` | Add internal note |
-| `POST` | `/api/leads/:id/contact` | Log a contact attempt |
-| `PATCH` | `/api/leads/:id/status` | Change pipeline status |
-| `PATCH` | `/api/leads/:id/won` | Mark as won |
-| `PATCH` | `/api/leads/:id/lost` | Mark as lost |
-| `PATCH` | `/api/leads/:id/hold` | Put on hold |
-| `POST` | `/api/leads/:id/proposal` | Send proposal (requires `proposalUrl`) |
-| `POST` | `/api/leads/:id/proposal/resend` | Resend proposal |
-| `POST` | `/api/leads/:id/proposal/revise` | Revise proposal |
-| `PATCH` | `/api/leads/:id/proposal/accept` | Mark proposal accepted |
-| `PATCH` | `/api/leads/:id/proposal/decline` | Mark proposal declined |
-| `POST` | `/api/leads/:id/contract` | Send contract |
-| `PATCH` | `/api/leads/:id/contract/signed` | Mark contract signed |
-| `POST` | `/api/leads/:id/attachments` | Register a file URL as an attachment |
-| `DELETE` | `/api/leads/:id/attachments/:fileId` | Remove an attachment |
+| `POST` | `/newsletter/subscribe` | creates a pending subscriber or reactivates an inactive one |
+| `GET` | `/newsletter/confirm/:token` | confirms double opt-in |
+| `POST` | `/newsletter/unsubscribe` | soft unsubscribe |
+| `GET` | `/newsletter/subscribers` | admin only |
+| `GET` | `/newsletter/stats` | admin only |
+| `GET` | `/newsletter/subscriber/:id` | admin only |
+| `PATCH` | `/newsletter/subscriber/:id/tags` | admin only |
+| `POST` | `/newsletter/track/open` | tracking pixel helper |
+| `POST` | `/newsletter/track/click` | click tracking helper |
+| `DELETE` | `/newsletter/subscriber/:id` | admin only soft delete |
 
----
+Subscribe example:
 
-### 9.6 Files (Proxied)
+```http
+POST /api/newsletter/subscribe
+Content-Type: application/json
 
-> **Proxied to:** `FILE_UPLOAD_SERVICE_URL/api/files/*`  
-> Requires Bearer token.  
-> Pass these additional headers from your JWT claims:
-
-```
-X-Tenant-Id: <tenantId from token>
-X-User-Id:   <sub from token>
-X-User-Role: <role from token>
-```
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/files/upload` | Upload up to 10 files (multipart/form-data, field name: `files`) |
-| `GET` | `/api/files` | List files with filters |
-| `GET` | `/api/files/:id` | Get file metadata |
-| `GET` | `/api/files/:id/download` | Download file content |
-| `PATCH` | `/api/files/:id/rename` | Rename file — body: `{ "name": "new-name.pdf" }` |
-| `PATCH` | `/api/files/:id` | Update file metadata |
-| `PUT` | `/api/files/:id/replace` | Replace file content |
-| `DELETE` | `/api/files/:id` | Soft-delete |
-| `DELETE` | `/api/files/:id/permanent` | Permanent delete |
-| `GET` | `/api/files/:id/transactions` | File change history |
-
-**Upload example (multipart):**
-```
-POST /api/files/upload
-Authorization: Bearer <token>
-X-Tenant-Id: abc123
-X-User-Id: user456
-X-User-Role: admin
-Content-Type: multipart/form-data
-
-files: <binary file data>
-```
-
----
-
-### 9.7 Newsletter (Owned)
-
-> **Backed by MongoDB.** This service owns the full newsletter lifecycle.  
-> Public routes: subscribe, confirm, unsubscribe.  
-> Admin routes require Bearer token.
-
----
-
-#### `POST /api/newsletter/subscribe` — Public
-Subscribe to the newsletter. Triggers a **double opt-in** confirmation email.
-
-- If the email already exists and is **active** → returns `200` (no duplicate).
-- If the email exists but is **inactive** → reactivates and sends a re-subscribe welcome email.
-- If new → creates record, sends confirmation email.
-
-**Body:**
-```json
 {
-  "email": "user@example.com",
-  "name": "Jane Doe",
-  "preferences": ["updates", "promotions"]
+  "email": "reader@example.com",
+  "name": "Reader",
+  "preferences": ["updates", "offers"]
 }
 ```
 
-**Response `201`:**
+## Payments API
+
+The payment module is an adapter over `payment-microservice`.
+
+### Public checkout routes
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/payments/methods` | list enabled checkout providers |
+| `POST` | `/payments/initiate` | create a provider checkout order |
+| `POST` | `/payments/verify` | verify payment and trigger provisioning |
+| `POST` | `/payments/webhooks/razorpay` | raw webhook forwarder |
+| `POST` | `/payments/webhooks/stripe` | raw webhook forwarder |
+
+Initiate example:
+
+```http
+POST /api/payments/initiate
+Content-Type: application/json
+x-tenant-id: easydev
+
+{
+  "provider": "RAZORPAY",
+  "productId": "easydev-communication",
+  "planKey": "growth",
+  "customerEmail": "buyer@example.com"
+}
+```
+
+Verify example:
+
+```http
+POST /api/payments/verify
+Content-Type: application/json
+x-tenant-id: easydev
+
+{
+  "provider": "RAZORPAY",
+  "productId": "easydev-communication",
+  "token": "order_or_reference_code",
+  "paymentId": "pay_123",
+  "signature": "razorpay_signature",
+  "planKey": "growth",
+  "name": "Jane Buyer",
+  "email": "buyer@example.com",
+  "businessName": "Buyer Co",
+  "externalId": "crm_123"
+}
+```
+
+### Authenticated customer billing routes
+
+| Method | Path |
+|---|---|
+| `GET` | `/payments/subscriptions` |
+| `GET` | `/payments/internal/products/:productId/current` | service-to-service helper |
+| `GET` | `/payments/invoices` |
+| `GET` | `/payments/payment-methods` |
+| `POST` | `/payments/payment-methods/setup-intent` |
+| `POST` | `/payments/payment-methods/setup-intents/:setupIntentId/complete` |
+| `PATCH` | `/payments/payment-methods/:paymentMethodId/default` |
+| `DELETE` | `/payments/subscriptions/:id` |
+| `PATCH` | `/payments/subscriptions/:id/plan` |
+
+### Admin billing routes
+
+| Method | Path |
+|---|---|
+| `GET` | `/payments/admin/stats` |
+| `GET` | `/payments/admin/transactions` |
+| `GET` | `/payments/admin/subscriptions` |
+
+## AI Communication Routes
+
+### Gateway-owned communication routes
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/communication/provision` | public gateway wrapper over product provisioning |
+| `GET` | `/communication/launch` | authenticated IAM SSO launch helper |
+| `GET` | `/communication/admin/providers` | proxy to AI Communication admin API |
+| `GET` | `/communication/admin/providers/health` | provider health summary |
+| `PATCH` | `/communication/admin/providers/:id` | update provider |
+| `PATCH` | `/communication/admin/providers/:id/toggle` | enable or disable provider |
+
+Provision example:
+
+```http
+POST /api/communication/provision
+Content-Type: application/json
+
+{
+  "name": "Jane Buyer",
+  "email": "buyer@example.com",
+  "planKey": "growth",
+  "paymentId": "pay_123",
+  "businessName": "Buyer Co",
+  "externalId": "crm_123"
+}
+```
+
+Launch example:
+
+```http
+GET /api/communication/launch?slug=easydev-ai-communication
+Authorization: Bearer <accessToken>
+```
+
+Successful response:
+
 ```json
 {
   "success": true,
-  "message": "Please check your email to confirm your subscription",
+  "message": "SSO launch URL generated",
   "data": {
-    "email": "user@example.com",
-    "requiresConfirmation": true
+    "launchUrl": "http://localhost:3002/sso?token=...&appId=...",
+    "expiresIn": 300
   }
 }
 ```
 
----
+### Customer product proxy routes
 
-#### `GET /api/newsletter/confirm/:token` — Public
-Confirm the subscription using the token from the opt-in email. Sends a welcome email on first confirmation.
+The gateway forwards `/customer/*` to AI Communication. Commonly used paths include:
 
-**Example:** `GET /api/newsletter/confirm/abc123token`
+| Method | Path |
+|---|---|
+| `GET` | `/customer/business` |
+| `GET` | `/customer/business/stats` |
+| `GET` | `/customer/business/usage` |
+| `PATCH` | `/customer/business/pay-as-you-go` |
+| `PATCH` | `/customer/business/auto-reply` |
+| `PATCH` | `/customer/business/test-mode` |
+| `GET` | `/customer/conversations` |
+| `GET` | `/customer/conversations/stats` |
+| `GET` | `/customer/messages/stats` |
+| `GET` | `/customer/ai-config` |
+| `PUT` | `/customer/ai-config` |
+| `DELETE` | `/customer/ai-config/faqs/:faqId` |
+| `GET` | `/customer/users` |
+| `GET` | `/customer/email-accounts` |
+| `POST` | `/customer/email-accounts` |
+| `PATCH` | `/customer/email-accounts/:id` |
+| `DELETE` | `/customer/email-accounts/:id` |
+| `POST` | `/customer/email-accounts/:id/test-smtp` |
+| `POST` | `/customer/email-accounts/:id/sync-now` |
 
-**Response `200`:**
-```json
-{
-  "success": true,
-  "message": "Your subscription has been confirmed. Thank you!"
-}
-```
+### Normalized customer channel helper routes
 
----
+The gateway normalizes a simpler channel contract on top of AI Communication:
 
-#### `POST /api/newsletter/unsubscribe` — Public
-Unsubscribe from the newsletter. Sends a farewell email.
-
-**Body:**
-```json
-{
-  "email": "user@example.com",
-  "reason": "no_longer_interested",
-  "feedback": "Too many emails"
-}
-```
-
----
-
-#### `GET /api/newsletter/subscribers` — Admin
-List all subscribers with pagination and filters.
-
-**Query params:**
-| Param | Type | Description |
+| Method | Path | Notes |
 |---|---|---|
-| `page` | number | Page number (default: 1) |
-| `limit` | number | Results per page (default: 20) |
-| `isActive` | boolean | Filter by active status |
-| `isConfirmed` | boolean | Filter by confirmation status |
-| `search` | string | Search by email or name |
-| `tag` | string | Filter by tag |
+| `GET` | `/customer/channels` | returns simplified `type`, `identifier`, `displayName`, `status` |
+| `POST` | `/customer/channels` | accepts `type`, `identifier`, `displayName` |
+| `DELETE` | `/customer/channels/:id` | removes channel |
 
-**Response `200`:**
-```json
+Create channel example:
+
+```http
+POST /api/customer/channels
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
 {
-  "success": true,
-  "data": {
-    "subscribers": [...],
-    "pagination": {
-      "total": 250,
-      "page": 1,
-      "limit": 20,
-      "pages": 13
-    }
-  }
+  "type": "email",
+  "identifier": "support@example.com",
+  "displayName": "Support Inbox"
 }
 ```
 
----
+## File Routes
 
-#### `GET /api/newsletter/stats` — Admin
-Returns total, active, confirmed, unsubscribed counts plus last 30-day growth.
+`/files/*` is proxied to the file upload service.
 
----
+Common paths:
 
-#### `GET /api/newsletter/subscriber/:id` — Admin
-Get a single subscriber by MongoDB ID.
+| Method | Path |
+|---|---|
+| `POST` | `/files/upload` |
+| `GET` | `/files` |
+| `GET` | `/files/:id` |
+| `GET` | `/files/:id/download` |
+| `PATCH` | `/files/:id/rename` |
+| `PATCH` | `/files/:id` |
+| `PUT` | `/files/:id/replace` |
+| `DELETE` | `/files/:id` |
+| `DELETE` | `/files/:id/permanent` |
+| `GET` | `/files/:id/transactions` |
 
----
+## Proposal Upload Route
 
-#### `PATCH /api/newsletter/subscriber/:id/tags` — Admin
-Update tags on a subscriber.
+The gateway-owned proposal upload contract is:
 
-**Body:** `{ "tags": ["vip", "enterprise"] }`
+```http
+POST /api/upload/proposal
+Authorization: Bearer <accessToken>
+Content-Type: application/json
 
----
-
-### 9.8 Upload — Proposal HTML (Owned)
-
-> Requires Bearer token.  
-> Saves a base64-encoded HTML file to `uploads/proposals/` on-disk and returns a public URL.
-
-#### `POST /api/upload/proposal`
-
-**Body:**
-```json
 {
-  "fileName": "proposal-acme-2026.html",
+  "fileName": "proposal-acme.html",
   "mimeType": "text/html",
-  "contentBase64": "<base64-encoded HTML string>"
+  "contentBase64": "PGh0bWw+Li4uPC9odG1sPg=="
 }
 ```
 
-> `contentBase64` can optionally include a data URL prefix (`data:text/html;base64,...`) — the prefix will be stripped automatically.
+Response:
 
-**Response `201`:**
 ```json
 {
   "success": true,
   "message": "Proposal file uploaded successfully",
   "data": {
-    "fileName": "proposal-acme-2026.html",
+    "fileName": "proposal-acme.html",
     "mimeType": "text/html",
-    "url": "http://localhost:3500/uploads/proposals/proposal-acme-2026.html"
+    "url": "http://localhost:3500/uploads/proposals/proposal-acme.html"
   }
 }
 ```
 
-> The returned `url` can be passed to `POST /api/leads/:id/proposal` to send the proposal to the client.
+## Calculator Routes
 
----
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/calculator/estimate` | return project, maintenance, server, and TCO estimates |
+| `GET` | `/calculator/profiles` | return supported project profiles and server tiers |
 
-### 9.9 Budget Calculator (Owned)
+Estimate example:
 
-> **No authentication required.** Both endpoints are public.  
-> All amounts default to **INR** unless `currency` is specified.
+```http
+POST /api/calculator/estimate
+Content-Type: application/json
 
----
-
-#### `POST /api/calculator/estimate`
-
-Generates a full cost breakdown for a project. Accepts a total `amount`, or a `customBreakdown` with per-phase absolute amounts.
-
-**Body fields:**
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `amount` | number (≥ 1000) | ✓ unless `customBreakdown` | Total project budget |
-| `currency` | `INR` \| `USD` \| `EUR` \| `GBP` | — | Default `INR` |
-| `projectType` | `website` \| `webapp` \| `ecommerce` \| `mobile` \| `other` | — | Default `website` |
-| `complexityLevel` | `basic` \| `standard` \| `advanced` \| `enterprise` | — | Default `standard` |
-| `projectName` | string (≤ 200) | — | Label shown in proposals |
-| `customBreakdown` | object | ✓ unless `amount` | Absolute amounts per phase (overrides % profile) |
-| `customBreakdown.design` | number | — | |
-| `customBreakdown.frontend` | number | — | |
-| `customBreakdown.backend` | number | — | |
-| `customBreakdown.testing` | number | — | |
-| `customBreakdown.projectManagement` | number | — | |
-| `customBreakdown.deployment` | number | — | |
-
-**Example request:**
-```json
 {
   "amount": 50000,
   "currency": "INR",
@@ -804,242 +489,48 @@ Generates a full cost breakdown for a project. Accepts a total `amount`, or a `c
 }
 ```
 
-**Response `200` — shape:**
-```json
-{
-  "success": true,
-  "message": "Cost estimate generated successfully",
-  "data": {
-    "summary": {
-      "projectName": "Business Website",
-      "currency": "INR",
-      "projectType": "website",
-      "complexityLevel": "standard",
-      "complexityDescription": "Business website with CMS, contact forms & basic integrations",
-      "totalProjectCost": 50000,
-      "estimatedTimeline": { "min": 2, "max": 4, "unit": "months" },
-      "annualMaintenanceRate": "18%",
-      "baseMonthlyMaintenance": 750,
-      "recommendedServerTier": "Shared Hosting",
-      "recommendedMonthlyServer": { "min": 200, "max": 600 }
-    },
+## Common Error Meanings
 
-    "projectBreakdown": {
-      "total": 50000,
-      "items": [
-        { "category": "UI/UX Design",           "key": "design",            "percentage": 20, "amount": 10000, "includes": ["..."] },
-        { "category": "Frontend Development",   "key": "frontend",          "percentage": 35, "amount": 17500, "includes": ["..."] },
-        { "category": "Backend Development",    "key": "backend",           "percentage": 20, "amount": 10000, "includes": ["..."] },
-        { "category": "Testing & QA",           "key": "testing",           "percentage": 10, "amount": 5000,  "includes": ["..."] },
-        { "category": "Project Management",     "key": "projectManagement", "percentage": 10, "amount": 5000,  "includes": ["..."] },
-        { "category": "Deployment & DevOps",    "key": "deployment",        "percentage": 5,  "amount": 2500,  "includes": ["..."] }
-      ]
-    },
-
-    "maintenancePlans": {
-      "annualRate": "18%",
-      "baseAnnualCost": 9000,
-      "baseMonthlyAverage": 750,
-      "note": "Maintenance starts at 18% of project cost per year. A 5% annual growth factor...",
-      "breakdown": [
-        { "category": "Bug Fixes & Code Updates",        "percentage": 35, "amount": 3150 },
-        { "category": "Security Patches & Audits",       "percentage": 20, "amount": 1800 },
-        { "category": "Performance Monitoring & Tuning", "percentage": 15, "amount": 1350 },
-        { "category": "Content & Feature Updates",       "percentage": 15, "amount": 1350 },
-        { "category": "Technical Support",               "percentage": 10, "amount": 900  },
-        { "category": "Backups & Disaster Recovery",     "percentage": 5,  "amount": 450  }
-      ],
-      "plans": {
-        "1year": { "years": 1, "totalCost": 9000,  "averageMonthly": 750, "yearlySchedule": [{ "year": 1, "annual": 9000, "monthly": 750, "breakdown": [] }] },
-        "3year": { "years": 3, "totalCost": 28275, "averageMonthly": 785, "yearlySchedule": [{ "year": 1, "annual": 9000 }, { "year": 2, "annual": 9450 }, { "year": 3, "annual": 9923 }] },
-        "5year": { "years": 5, "totalCost": 51576, "averageMonthly": 860, "yearlySchedule": ["year 1..5 with +5% escalation"] }
-      }
-    },
-
-    "serverCosts": {
-      "note": "All amounts in INR. Server costs are estimated ranges.",
-      "tiers": [
-        { "tier": "Shared Hosting",       "monthly": { "min": 200,   "max": 600   }, "yearly": { "min": 2400,   "max": 7200   }, "3year": { "min": 7200,   "max": 21600  }, "5year": { "min": 12000,  "max": 36000  }, "providers": ["Hostinger", "SiteGround"] },
-        { "tier": "VPS",                  "monthly": { "min": 800,   "max": 3000  }, "yearly": { "min": 9600,   "max": 36000  }, "3year": { "min": 28800,  "max": 108000 }, "5year": { "min": 48000,  "max": 180000 }, "providers": ["DigitalOcean", "Linode"] },
-        { "tier": "Cloud (Auto-scaling)", "monthly": { "min": 3000,  "max": 15000 }, "yearly": { "min": 36000,  "max": 180000 }, "3year": { "min": 108000, "max": 540000 }, "5year": { "min": 180000, "max": 900000 }, "providers": ["AWS", "GCP", "Azure"] },
-        { "tier": "Dedicated Server",     "monthly": { "min": 12000, "max": 50000 }, "yearly": { "min": 144000, "max": 600000 }, "3year": { "min": 432000, "max": 1800000 }, "5year": { "min": 720000, "max": 3000000 }, "providers": ["Hetzner", "OVHcloud"] }
-      ]
-    },
-
-    "totalCostOfOwnership": {
-      "note": "TCO = one-time project cost + cumulative maintenance + cumulative server cost (range).",
-      "1year": { "projectCost": 50000, "maintenanceCost": 9000, "scenarios": [{ "tier": "Shared Hosting", "totalMin": 61400, "totalMax": 66200 }, { "...": "..." }] },
-      "3year": { "...": "..." },
-      "5year": { "...": "..." }
-    },
-
-    "comparisonTable": [
-      { "serverTier": "Shared Hosting", "monthlyServer": { "min": 200, "max": 600 }, "1year": { "totalMin": 61400, "totalMax": 66200 }, "3year": { "...": "..." }, "5year": { "...": "..." } }
-    ],
-
-    "proposalScenarios": [
-      { "label": "Budget",      "serverTier": "Shared Hosting",       "monthlyCost": { "maintenance": 750, "server": 200,  "total": 950  }, "3year": { "min": 85475, "max": 96275 } },
-      { "label": "Recommended","serverTier": "Shared Hosting",       "monthlyCost": { "maintenance": 750, "server": 400,  "total": 1150 }, "3year": { "...": "..." } },
-      { "label": "Enterprise", "serverTier": "Cloud (Auto-scaling)", "monthlyCost": { "maintenance": 750, "server": 3000, "total": 3750 }, "3year": { "...": "..." } }
-    ]
-  }
-}
-```
-
-**Error `400`** — when neither `amount` nor `customBreakdown` is provided:
-```json
-{ "success": false, "message": "Provide either \"amount\" (number) or \"customBreakdown\" (object with cost keys)." }
-```
-
----
-
-#### `GET /api/calculator/profiles`
-
-Returns all available project type / complexity combinations so the frontend can build dynamic dropdowns without hardcoding.
-
-**Response `200`:**
-```json
-{
-  "success": true,
-  "data": {
-    "projectTypes":    ["website", "webapp", "ecommerce", "mobile", "other"],
-    "complexityLevels": ["basic", "standard", "advanced", "enterprise"],
-    "profiles": {
-      "website": {
-        "basic":      { "description": "Simple brochure site", "maintenanceRate": "15%", "timeline": { "min": 1, "max": 2 }, "breakdown": { "design": "25%", "frontend": "40%", "..." : "..." } },
-        "standard":  { "...": "..." },
-        "advanced":  { "...": "..." },
-        "enterprise": { "...": "..." }
-      },
-      "webapp": { "...": "..." },
-      "ecommerce": { "...": "..." },
-      "mobile": { "...": "..." },
-      "other": { "...": "..." }
-    },
-    "serverTiers": [
-      { "tier": "Shared Hosting", "suitableFor": "...", "monthly": { "min": 200, "max": 600 }, "specs": "...", "bestFor": ["..."] }
-    ]
-  }
-}
-```
-
----
-
-| HTTP Status | Meaning |
+| Status | Meaning |
 |---|---|
-| `400` | Bad request — validation failed or missing required fields |
-| `401` | Unauthenticated — no token, invalid token, or expired token |
-| `403` | Forbidden — authenticated but insufficient role |
-| `404` | Resource not found |
-| `409` | Conflict — e.g. duplicate email |
-| `422` | Unprocessable entity — business rule violation |
-| `429` | Rate limit exceeded |
-| `500` | Internal server error |
-| `502` | Upstream microservice returned an error |
-| `503` | Upstream microservice is unreachable or its URL is not configured |
+| `400` | validation or malformed payload |
+| `401` | missing or invalid auth |
+| `403` | authenticated but not authorized |
+| `404` | missing resource or expired pending checkout record |
+| `409` | business conflict, such as duplicate purchase |
+| `429` | rate limit exceeded |
+| `502` | upstream service responded with an integration failure |
+| `503` | upstream service URL missing or service unavailable |
 
-All error responses follow:
-```json
-{
-  "success": false,
-  "message": "Human-readable error message",
-  "errors": [ { "field": "email", "message": "..." } ]
-}
-```
+## End-To-End Flows
 
----
+### Public purchase to product access
 
-## 11. End-to-End Workflows
+1. Frontend calls `GET /payments/methods`.
+2. Frontend calls `POST /payments/initiate`.
+3. Frontend completes provider checkout.
+4. Frontend calls `POST /payments/verify`.
+5. Gateway verifies payment with the payment microservice.
+6. Gateway provisions AI Communication locally and in IAM.
+7. User signs in through IAM via `/auth/login`.
+8. Frontend calls `GET /communication/launch`.
+9. Browser opens the returned AI Communication `launchUrl`.
 
-### Workflow 1 — Website contact form
-```
-1. User fills out contact form on website
-2. Frontend POSTs to: POST /api/leads/submit
-   Headers: x-tenant-id: <tenantId>
-   Body: { firstName, lastName, email, subject, message, gdprConsent: true, category: "General Inquiry" }
-3. Gateway proxies the request to lead-microservice
-4. lead-microservice stores the lead, sends notification email to admin, sends acknowledgement to user
-5. Admin views the lead in the CRM dashboard via GET /api/leads
-```
+### Existing member opens the product
 
-### Workflow 2 — Project inquiry form
-```
-1. User fills out the "Get a Quote" form
-2. Frontend POSTs to: POST /api/leads/submit
-   Body: { ..., category: "Sales", projectType: "ecommerce", budget: "25k-50k", timeline: "3-6months" }
-3. Same submit endpoint — lead-microservice handles all CRM stages from here
-```
+1. Frontend restores session with `GET /auth/me`.
+2. Frontend loads subscriptions with `GET /payments/subscriptions`.
+3. Frontend calls `GET /communication/launch`.
+4. AI Communication exchanges the SSO token for its product cookie session.
 
-### Workflow 3 — Sending a proposal
-```
-1. Admin generates a proposal HTML page
-2. POST /api/upload/proposal  →  { url: "http://localhost:3500/uploads/proposals/acme.html" }
-3. POST /api/leads/:id/proposal  →  { proposalUrl: "<url from step 2>", quotedAmount: 12000, quotedCurrency: "USD" }
-4. lead-microservice emails the proposal link to the client
-```
+### Public lead capture
 
-### Workflow 4 — Newsletter subscribe + confirm
-```
-1. Visitor enters email on website
-2. POST /api/newsletter/subscribe  →  201 "Please check your email to confirm"
-3. User clicks confirmation link in email (link contains token)
-4. GET /api/newsletter/confirm/:token  →  200 "Confirmed"
-5. Welcome email is sent to subscriber
-```
+1. Frontend sends `POST /leads/submit` with `x-tenant-id`.
+2. Gateway stores the lead in its local lead module.
+3. Staff review and operate on that lead using authenticated `/leads/*` routes.
 
-### Workflow 5 — User login and protected request
-```
-1. POST /api/auth/login  →  { accessToken, refreshToken }
-2. Store accessToken in memory (or httpOnly cookie)
-3. All protected requests:  Authorization: Bearer <accessToken>
-4. When 401 "Token has expired":
-   POST /api/auth/token/refresh  →  { accessToken: "<new token>" }
-```
+## Integration Notes
 
-### Workflow 6 — File attachment on a lead
-```
-1. POST /api/files/upload  (multipart, with X-Tenant-Id, X-User-Id, X-User-Role headers)
-   →  { data: { files: [{ _id: "file123", url: "..." }] } }
-2. POST /api/leads/:id/attachments  →  { fileUrl: "...", fileName: "...", fileType: "..." }
-```
-
-### Workflow 7 — Generate a cost estimate before submitting an inquiry
-```
-1. User fills the "Get a Quote" form and requests a price breakdown
-2. POST /api/calculator/estimate
-   Body: { amount: 50000, projectType: "website", complexityLevel: "standard", projectName: "My Site" }
-3. Display the returned projectBreakdown, maintenancePlans and proposalScenarios to the user
-4. User confirms and submits the inquiry:
-   POST /api/leads/submit
-   Headers: x-tenant-id: <tenantId>
-   Body: { firstName, lastName, email, subject, message, gdprConsent: true, category: "Sales",
-           projectType: "website", budget: "25k-50k", timeline: "2-3months" }
-5. Admin reviews the lead in the CRM and can attach the estimate as context
-```
-
----
-
-## 12. Postman Collection
-
-The full Postman collection is available two ways:
-
-**Option A — Download from the running service:**
-```
-GET http://localhost:3500/api/postman-collection
-```
-Open Postman → Import → Link → paste the URL above.
-
-**Option B — Import the file directly:**
-The file is at `postman/Web-Agency-API.postman_collection.json` in this repository.
-
-### Collection variables
-| Variable | Description |
-|---|---|
-| `baseUrl` | `http://localhost:3500` — change for staging/production |
-| `authToken` | Auto-filled by the Login request test script |
-| `refreshToken` | Auto-filled by the Login request test script |
-| `leadId` | Auto-filled after submitting a lead |
-| `fileId` | Auto-filled after uploading a file |
-| `subscriberEmail` | Email used in newsletter tests |
-
-> After running **Login**, all subsequent protected requests automatically inherit `{{authToken}}`.
+- New clients should not assume this repo exposes blog or plans CRUD routes. It does not.
+- Use the gateway for all browser traffic even when the downstream service has its own public docs.
+- If a gateway route returns `503`, inspect the matching upstream URL in the gateway environment before debugging the client.

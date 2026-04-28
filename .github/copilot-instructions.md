@@ -1,386 +1,174 @@
 # Web Agency Backend API — Copilot Instructions
 
-## Service Overview
+## Service Role
 
-This is the **web-agency-backend** service — the main public-facing API for the web agency website. It handles:
-- **Contact form** submissions (`/api/contact`)
-- **Project inquiries** (`/api/inquiry`)
-- **Newsletter** subscriptions with email-microservice integration (`/api/newsletter`)
-- **Proposal file uploads** (`/api/upload`)
+This repository is the public gateway for the EasyDev workspace. Browser clients should call this service, not the downstream services directly.
 
----
+Current responsibilities:
 
-## Microservice Architecture
+- public lead submission and lead management routes in this repo
+- newsletter subscription and confirmation routes in this repo
+- proposal upload orchestration in this repo
+- pricing calculator routes in this repo
+- payment adapter routes that call `payment-microservice`
+- AI Communication provisioning and launch routes that call the product backend and IAM
+- proxy routes for IAM, file upload, and customer product APIs
 
-This service depends on three external microservices. **Never duplicate their responsibilities here.**
+## Integration Topology
 
-### 1. user-auth-service (Port: 4002)
-Source: `../user-auth-service`
+### 1. IAM service
 
-Issues and owns all JWT access tokens. Routes are mounted at `/api/auth/...`.
+Workspace source: `../multi-tannet-auth-services`
 
-**Key routes (call these from the frontend, never proxy them here):**
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/auth/register` | New user registration |
-| POST | `/api/auth/login` | Login, returns `accessToken` + `refreshToken` |
-| POST | `/api/auth/login/mfa` | Complete MFA login step |
-| POST | `/api/auth/token/refresh` | Refresh access token |
-| GET/POST | `/api/auth/token/verify` | Verify token validity |
-| POST | `/api/auth/email/verify` | Verify email with OTP |
-| POST | `/api/auth/email/resend` | Resend verification OTP |
-| POST | `/api/auth/password/forgot` | Request password reset |
-| POST | `/api/auth/password/reset` | Complete password reset |
-| POST | `/api/auth/password/change` | Change password (auth required) |
-| POST | `/api/auth/otp/verify` | Verify OTP code |
-| POST | `/api/auth/otp/resend` | Resend OTP |
-| POST | `/api/auth/logout` | Logout + revoke token |
-| POST | `/api/auth/account/unlock/request` | Request account unlock |
-| POST | `/api/auth/account/unlock/confirm` | Confirm account unlock |
-| GET | `/api/auth/me` | Get own profile (auth required) |
-| PATCH | `/api/auth/me` | Update own profile (auth required) |
-| POST | `/api/auth/social/login` | Social OAuth login |
-| GET | `/api/auth/social/accounts` | List linked social accounts (auth required) |
-| POST | `/api/auth/social/link` | Link a social account (auth required) |
-| DELETE | `/api/auth/social/unlink/:provider` | Unlink a social account (auth required) |
+Recommended local URL:
 
-**Admin-only routes** (role: `admin` or `super_admin`):
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/admin/users/:userId/unlock` | Force-unlock a user account |
-| GET | `/api/admin/sessions` | List all active sessions |
-| DELETE | `/api/admin/sessions/:sessionId` | Force-revoke a session |
-| GET | `/api/admin/logs` | View auth activity logs |
-| GET | `/api/admin/analytics` | Auth analytics |
+```text
+http://localhost:3100/api/v1/iam
+```
 
-**JWT Token claims** (access token payload):
-```json
+Rules:
+
+- IAM is the only service that issues access and refresh tokens.
+- `middleware/auth.js` in this repo only verifies JWTs with the shared secret.
+- The JWT claims must satisfy `iss === 'user-auth-service'` and `aud === 'dashboard-app'`.
+- Use `GET /api/auth/me` for session validation. Do not build new integrations around `/api/auth/token/verify`.
+- Gateway auth proxies should target the IAM routes behind `AUTH_SERVICE_URL`.
+
+### 2. Payment service
+
+Workspace source: `../payment-microservice`
+
+Recommended local URL:
+
+```text
+http://localhost:3200/api/v1
+```
+
+Rules:
+
+- Payment verification, subscriptions, invoices, and payment methods belong there.
+- This repo may adapt or proxy payment flows, but should not reimplement payment state machines locally.
+
+### 3. AI Communication product
+
+Workspace source: `../Product/ai automation communication`
+
+Recommended local URLs:
+
+```text
+Backend:  http://localhost:3001/api/v1
+Frontend: http://localhost:3002
+```
+
+Rules:
+
+- Customer product launch is IAM SSO based.
+- Product provisioning must remain server-to-server.
+- Never expose `COMMUNICATION_API_KEY` to the browser.
+- The product backend validates IAM JWTs and IAM SSO tokens.
+
+### 4. File upload service
+
+Rules:
+
+- All durable file storage belongs to the file upload service.
+- This repo may only keep temporary local proposal HTML under `uploads/proposals`.
+
+### 5. Email service
+
+Rules:
+
+- All transactional mail goes through `utils/email.js`.
+- Never call `nodemailer` directly from routes or services.
+
+## Route Ownership
+
+### Owned in this repo
+
+- `/api/leads/*`
+- `/api/newsletter/*`
+- `/api/upload/proposal`
+- `/api/calculator/*`
+- `/api/payments/*` adapter routes
+- `/api/communication/provision`
+- `/api/communication/launch`
+
+### Proxied through this repo
+
+- `/api/auth/*`
+- `/api/rbac/*`
+- `/api/users/*`
+- `/api/tenants/*`
+- `/api/sessions/*`
+- `/api/iam/*`
+- `/api/files/*`
+- `/api/customer/*`
+- selected `/api/communication/admin/*` routes
+
+## Auth Rules
+
+- Use `authenticate` for protected gateway routes.
+- Use `authorize(...)` only when the route requires explicit roles.
+- `req.user` comes from the verified JWT payload; do not load a local user record just to validate auth.
+- Never sign JWTs in this repository.
+- Never add local login, registration, token verify, or token refresh implementations here.
+
+`req.user` shape:
+
+```js
 {
-  "sub": "<userId>",
-  "email": "user@example.com",
-  "role": "admin",
-  "tenantId": "<tenantId>",
-  "sessionId": "<sessionId>",
-  "jti": "<uuid>",
-  "iss": "user-auth-service",
-  "aud": "dashboard-app"
+  id: string,
+  email: string,
+  role: string,
+  tenantId: string,
+  sessionId: string,
 }
 ```
 
-**`middleware/auth.js` in this repo** verifies with `JWT_ACCESS_SECRET` (shared secret) and checks `issuer`/`audience` claims. It maps the decoded payload to `req.user = { id, email, role, tenantId, sessionId }`. **No DB lookup. Never issue or sign tokens here.**
+## Lead Rules
 
----
+- Standard lead submission and lead CRUD are owned locally in this repo now.
+- Do not reintroduce an external lead proxy for the existing `/api/leads/*` surface unless the task explicitly requires it.
+- Preserve the current response envelope: `{ success, message, data? }`.
 
-### 2. lead-microservice (Port: configurable via `LEAD_SERVICE_URL`)
-Source: `../lead-microservice`
+## Payment And Product Provisioning Rules
 
-Owns the full CRM / sales pipeline lifecycle.
+- The normal customer purchase path is `EasyDev -> gateway -> payment service`.
+- Successful payment verification can trigger AI Communication provisioning.
+- If you touch provisioning flows, keep the sequence consistent:
+  1. verify payment
+  2. create local product account
+  3. create or resolve IAM user
+  4. link IAM user back to the product business
+- Do not move these secrets or orchestration details into frontend code.
 
-**Key routes:**
-| Method | Path | Auth | Purpose |
-|---|---|---|---|
-| POST | `/api/leads/submit` | Public | Submit a lead (requires `x-tenant-id` header) |
-| GET | `/api/leads` | ✓ | List leads with filtering/pagination |
-| GET | `/api/leads/stats` | ✓ | Pipeline statistics |
-| GET | `/api/leads/search` | ✓ | Full-text search |
-| GET | `/api/leads/export` | ✓ | Export to CSV |
-| GET | `/api/leads/follow-up` | ✓ | Leads due for follow-up |
-| POST | `/api/leads/bulk-update` | ✓ | Bulk status/assignment update |
-| POST | `/api/leads/import` | ✓ | CSV import |
-| GET | `/api/leads/:id` | ✓ | Get single lead |
-| PATCH | `/api/leads/:id` | ✓ | Update lead |
-| DELETE | `/api/leads/:id` | ✓ | Soft delete |
-| POST | `/api/leads/:id/notes` | ✓ | Add internal note |
-| POST | `/api/leads/:id/contact` | ✓ | Log contact attempt |
-| PATCH | `/api/leads/:id/status` | ✓ | Change pipeline status |
-| PATCH | `/api/leads/:id/won` | ✓ | Mark as won |
-| PATCH | `/api/leads/:id/lost` | ✓ | Mark as lost |
-| PATCH | `/api/leads/:id/hold` | ✓ | Put on hold |
-| POST | `/api/leads/:id/proposal` | ✓ | Send proposal |
-| POST | `/api/leads/:id/proposal/resend` | ✓ | Resend proposal |
-| POST | `/api/leads/:id/proposal/revise` | ✓ | Revise proposal |
-| PATCH | `/api/leads/:id/proposal/accept` | ✓ | Mark proposal accepted |
-| PATCH | `/api/leads/:id/proposal/decline` | ✓ | Mark proposal declined |
-| POST | `/api/leads/:id/contract` | ✓ | Send contract |
-| PATCH | `/api/leads/:id/contract/signed` | ✓ | Mark contract signed |
-| POST | `/api/leads/:id/attachments` | ✓ | Register file attachment (URL from file-upload-service) |
-| DELETE | `/api/leads/:id/attachments/:fileId` | ✓ | Remove attachment |
+## Code Conventions
 
-**`POST /api/leads/submit` payload:**
-```json
-{
-  "firstName": "string (required)",
-  "lastName": "string (required)",
-  "email": "valid email (required)",
-  "subject": "string (required, max 200)",
-  "message": "string (required, max 5000)",
-  "phone": "string (optional)",
-  "gdprConsent": true,
-  "budget": "under-5k|5k-10k|10k-25k|25k-50k|50k-100k|over-100k|not-sure (optional)",
-  "timeline": "asap|1-month|2-3months|3-6months|6months+|flexible (optional)",
-  "projectType": "website|webapp|mobile|ecommerce|redesign|maintenance|consulting|other (optional)",
-  "category": "General Inquiry|Technical Support|Sales|Partnership|Feedback|Career|Other (optional)",
-  "preferredContactMethod": "email|phone|whatsapp|any (optional)",
-  "website": "URL (optional)",
-  "customFields": {} 
-}
-```
+- Node.js 18+ with ES modules.
+- Routes live in `routes/`.
+- Validation lives in `validation/`.
+- Shared helpers live in `utils/`.
+- Propagate failures with `next(error)`.
+- Keep side effects such as email dispatch and remote notifications non-blocking when the route does not need to wait for them.
 
-**Never replicate** lead scoring, pipeline stages, proposal/contract logic, or CRM models in this repo.
-
----
-
-### 3. Email Microservice (URL via `EMAIL_SERVICE_URL`)
-
-All outgoing transactional emails must go through the email microservice via `utils/email.js` helpers. **Never use `nodemailer` directly.**
-
-Payload format: `{ to, templateId, data: { ...templateVariables } }`
-
----
-
-### 4. file-upload-service (Port: 4001, URL via `FILE_UPLOAD_SERVICE_URL`)
-Source: `../file-upload-service`
-
-Handles all file storage (local/S3/GCS/Azure/R2). When a proposal or attachment needs to be stored in the cloud, upload it here first, then register the returned URL.
-
-**Key routes (`/api/files/...`):**
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/files/upload` | Upload up to 10 files (multipart) |
-| GET | `/api/files` | List files with filters |
-| GET | `/api/files/:id` | Get file metadata |
-| GET | `/api/files/:id/download` | Download file |
-| PATCH | `/api/files/:id/rename` | Rename file |
-| PATCH | `/api/files/:id` | Update file metadata |
-| PUT | `/api/files/:id/replace` | Replace file content |
-| DELETE | `/api/files/:id` | Soft delete |
-| DELETE | `/api/files/:id/permanent` | Permanent delete |
-| GET | `/api/files/:id/transactions` | File history |
-
-**Required headers:** `X-Tenant-Id`, `X-User-Id`, `X-User-Role` (pass values from `req.user`).
-
-**Never store files directly in this service.** The `uploads/` directory in this repo is only for temporary local proposal HTML files served via `/uploads/proposals/...`.
-
----
-
-## Email Template IDs
-
-Use these exact `templateId` strings when calling the email microservice:
-
-| Action | `templateId` | Key `data` fields |
-|---|---|---|
-| Contact form received (admin) | `CONTACT_NOTIFICATION` | `name, email, phone, company, subject, message, submittedAt, contactId` |
-| Contact form auto-reply (user) | `CONTACT_CONFIRMATION` | `name, subject, companyName, contactId` |
-| Inquiry received (admin) | `INQUIRY_NOTIFICATION` | `name, email, phone, company, projectType, budget, timeline, description, requirements, submittedAt, inquiryId, inquiryNumber` |
-| Inquiry auto-reply (user) | `INQUIRY_CONFIRMATION` | `name, projectType, budget, timeline, companyName, inquiryId, inquiryNumber` |
-| Newsletter double opt-in confirm | `NEWSLETTER_SUBSCRIBE_CONFIRMATION` | `name, email, confirmationUrl, companyName` |
-| Newsletter welcome (post-confirm) | `NEWSLETTER_WELCOME` | `name, email, companyName, unsubscribeUrl` |
-| Newsletter re-subscribe welcome | `NEWSLETTER_RESUBSCRIBE` | `name, email, companyName, unsubscribeUrl` |
-| Newsletter farewell (unsubscribe) | `NEWSLETTER_FAREWELL` | `name, email, companyName` |
-| Project proposal sent | `PROJECT_PROPOSAL_EMAIL` | `name, email, company, projectType, budget, timeline, inquiryId, inquiryNumber, proposalUrl, quotedAmount, quotedCurrency` |
-
----
-
-## What NOT to Add
-
-| Feature | Reason |
-|---|---|
-| Blog / CMS routes | Handled by a dedicated content service — do not add `/api/blogs` |
-| Pricing / Plans routes | Handled separately — do not add `/api/plans` |
-| Admin user management (create/list users) | Owned by user-auth-service |
-| Local login, registration, or token endpoints | Owned by user-auth-service |
-| Direct `nodemailer` usage | All email goes through the email microservice |
-| Lead pipeline / CRM / proposal logic | Owned by lead-microservice |
-| File storage to disk/cloud | Owned by file-upload-service |
-| Token revocation lists | Owned by user-auth-service |
-
----
-
-## Environment Variables
+## Environment Variables That Matter For Integration
 
 ```env
-# Service
 PORT=3500
-NODE_ENV=development
-FRONTEND_URL=https://yoursite.com
-CORS_ORIGINS=https://yoursite.com,https://admin.yoursite.com
-
-# Database (only for contact, inquiry, newsletter, upload data)
-MONGODB_URI=mongodb+srv://...
-
-# Shared JWT secret — must equal JWT_ACCESS_SECRET from user-auth-service
-JWT_ACCESS_SECRET=...
+JWT_ACCESS_SECRET=match-iam-JWT_SECRET
 JWT_ISSUER=user-auth-service
 JWT_AUDIENCE=dashboard-app
-
-# External microservices
-EMAIL_SERVICE_URL=http://email-service:4000
-LEAD_SERVICE_URL=http://lead-microservice:4002
-FILE_UPLOAD_SERVICE_URL=http://file-upload-service:4001
-AUTH_SERVICE_URL=http://user-auth-service:4002
-
-# Admin defaults
-ADMIN_EMAIL=admin@yoursite.com
-
-# Feature flags
-ENABLE_SWAGGER=true
-ENABLE_LOGGING=true
+AUTH_SERVICE_URL=http://localhost:3100
+PAYMENT_SERVICE_URL=http://localhost:3200
+COMMUNICATION_SERVICE_URL=http://localhost:3001
+FILE_UPLOAD_SERVICE_URL=http://localhost:4001
+EMAIL_SERVICE_URL=http://localhost:4000
 ```
 
----
+## Avoid These Mistakes
 
-## Code Conventions
-
-- ES modules (`import/export`), Node.js 18+.
-- Express route files live in `routes/`, one file per resource.
-- Validation rules in `validation/`, using `express-validator`.
-- Models in `models/`, Mongoose schemas.
-- Utility helpers in `utils/`.
-- All email dispatch goes through `utils/email.js` helper functions — never call the email service URL directly from a route.
-- Authentication on admin-only routes: use the `authenticate` middleware from `middleware/auth.js`. Access the caller via `req.user.id`, `req.user.email`, `req.user.role`.
-- Non-blocking side-effects (emails, lead forwarding): always fire-and-forget with `.catch()` error logging, never `await` inline.
-- All responses follow the shape `{ success: boolean, message: string, data?: any }`.
-- Use `next(error)` to propagate errors to the global error handler in `middleware/errorHandler.js`.
-- Pagination: use `getPaginationParams` / `getPaginationMeta` from `utils/pagination.js`.
-
----
-
-## Folder Structure (keep this shape)
-
-```
-routes/          ← Express routers (contact, inquiry, newsletter, upload only)
-models/          ← Mongoose models (Contact, Inquiry, Newsletter only)
-middleware/      ← auth (JWT verify), errorHandler, validation, requestLogger
-validation/      ← express-validator rule sets
-utils/
-  email.js       ← Email microservice client (only email dispatch helpers go here)
-  errors.js      ← Custom error classes
-  logger.js      ← Winston logger
-  pagination.js  ← Pagination helpers
-config/
-  index.js       ← Centralised env config
-  database.js    ← MongoDB connection
-  jwt.js         ← JWT_ACCESS_SECRET + issuer/audience exports
-```
-
-
----
-
-## Microservice Architecture
-
-This service depends on three external microservices. **Never duplicate their responsibilities here.**
-
-### 1. User Auth Microservice
-- Issues and owns JWT tokens.
-- All incoming requests use JWTs signed by this service.
-- **Auth middleware in this repo only verifies the JWT signature** using the shared `JWT_SECRET` — it does NOT call the auth service on every request.
-- To authenticate admin actions from the frontend, the client must first log in via the user-auth microservice, then include the bearer token here.
-- **Never add a local `/auth/login` or user-registration route.** Route those calls to the auth microservice.
-
-### 2. Lead Microservice
-- Owns CRM / lead pipeline logic.
-- When an inquiry or contact form entry needs to progress through a sales funnel, forward it to the lead microservice.
-- Call via HTTP from the relevant route handler using `axios` and the env var `LEAD_SERVICE_URL`.
-- **Never replicate lead scoring, pipeline stages, or CRM models in this repo.**
-
-### 3. Email Microservice
-- All outgoing transactional emails **must** go through the email microservice.
-- Use the helper functions in `utils/email.js`. Do **not** use `nodemailer` directly.
-- Base URL is configured via `EMAIL_SERVICE_URL` env var (see `config/index.js`).
-- Payload format: `{ to, templateId, data: { ...templateVariables } }`
-
----
-
-## Email Template IDs
-
-Use these exact `templateId` strings when calling the email microservice:
-
-| Action | `templateId` | Key `data` fields |
-|---|---|---|
-| Contact form received (admin) | `CONTACT_NOTIFICATION` | `name, email, phone, company, subject, message, submittedAt, contactId` |
-| Contact form auto-reply (user) | `CONTACT_CONFIRMATION` | `name, subject, companyName, contactId` |
-| Inquiry received (admin) | `INQUIRY_NOTIFICATION` | `name, email, phone, company, projectType, budget, timeline, description, requirements, submittedAt, inquiryId, inquiryNumber` |
-| Inquiry auto-reply (user) | `INQUIRY_CONFIRMATION` | `name, projectType, budget, timeline, companyName, inquiryId, inquiryNumber` |
-| Newsletter double opt-in confirm | `NEWSLETTER_SUBSCRIBE_CONFIRMATION` | `name, email, confirmationUrl, companyName` |
-| Newsletter welcome (post-confirm) | `NEWSLETTER_WELCOME` | `name, email, companyName, unsubscribeUrl` |
-| Newsletter re-subscribe welcome | `NEWSLETTER_RESUBSCRIBE` | `name, email, companyName, unsubscribeUrl` |
-| Newsletter farewell (unsubscribe) | `NEWSLETTER_FAREWELL` | `name, email, companyName` |
-| Project proposal sent | `PROJECT_PROPOSAL_EMAIL` | `name, email, company, projectType, budget, timeline, inquiryId, inquiryNumber, proposalUrl, quotedAmount, quotedCurrency` |
-
----
-
-## What NOT to Add
-
-| Feature | Reason |
-|---|---|
-| Blog / CMS routes | Handled by a dedicated content service — do not add `/api/blogs` |
-| Pricing / Plans routes | Handled separately — do not add `/api/plans` |
-| Admin user management (create/list admins) | Owned by user-auth microservice |
-| Local login or registration endpoints | Owned by user-auth microservice |
-| Direct `nodemailer` usage | All email goes through the email microservice |
-| Lead pipeline / CRM logic | Owned by lead microservice |
-
----
-
-## Environment Variables
-
-```env
-# Service
-PORT=3500
-NODE_ENV=development
-FRONTEND_URL=https://yoursite.com
-CORS_ORIGINS=https://yoursite.com,https://admin.yoursite.com
-
-# Database (only for contact, inquiry, newsletter, upload data)
-MONGODB_URI=mongodb+srv://...
-
-# Shared JWT secret — must match the user-auth microservice
-JWT_SECRET=...
-
-# External microservices
-EMAIL_SERVICE_URL=http://email-service:4000
-LEAD_SERVICE_URL=http://lead-service:4100
-
-# Admin defaults
-ADMIN_EMAIL=admin@yoursite.com
-
-# Feature flags
-ENABLE_SWAGGER=true
-ENABLE_LOGGING=true
-```
-
----
-
-## Code Conventions
-
-- ES modules (`import/export`), Node.js 18+.
-- Express route files live in `routes/`, one file per resource.
-- Validation rules in `validation/`, using `express-validator`.
-- Models in `models/`, Mongoose schemas.
-- Utility helpers in `utils/`.
-- All email dispatch goes through `utils/email.js` helper functions — never call the email service URL directly from a route.
-- Authentication on admin-only routes: use the `authenticate` middleware from `middleware/auth.js`.
-- Non-blocking side-effects (emails, lead forwarding): always fire-and-forget with `.catch()` error logging, never `await` inline.
-- All responses follow the shape `{ success: boolean, message: string, data?: any }`.
-- Use `next(error)` to propagate errors to the global error handler in `middleware/errorHandler.js`.
-- Pagination: use `getPaginationParams` / `getPaginationMeta` from `utils/pagination.js`.
-
----
-
-## Folder Structure (keep this shape)
-
-```
-routes/          ← Express routers (contact, inquiry, newsletter, upload only)
-models/          ← Mongoose models (Contact, Inquiry, Newsletter only)
-middleware/      ← auth (JWT verify), errorHandler, validation, requestLogger
-validation/      ← express-validator rule sets
-utils/
-  email.js       ← Email microservice client (only email dispatch helpers go here)
-  errors.js      ← Custom error classes
-  logger.js      ← Winston logger
-  pagination.js  ← Pagination helpers
-config/
-  index.js       ← Centralised env config
-  database.js    ← MongoDB connection
-  jwt.js         ← JWT secret export
-```
+- Adding browser-facing calls directly to IAM or product services when the gateway already owns the contract.
+- Reintroducing `/api/auth/token/verify` in new code.
+- Using `JWT_SECRET` instead of `JWT_ACCESS_SECRET` in this repo.
+- Duplicating payment, IAM, email, or durable file storage logic locally.
+- Exposing service-to-service API keys to the browser.
