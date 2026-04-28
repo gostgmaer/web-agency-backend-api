@@ -33,7 +33,7 @@ const router = express.Router();
  * Body:
  *   name         {string}  required — customer full name
  *   email        {string}  required — customer email
- *   planKey      {string}  required — EasyDev plan key (starter | growth | business)
+ *   planKey      {string}  required — EasyDev plan key (starter | growth | payg)
  *   paymentId    {string}  optional — Razorpay/Stripe payment ID for audit trail
  *   businessName {string}  optional — company/brand name (defaults to name)
  *   externalId   {string}  optional — external reference ID
@@ -63,7 +63,7 @@ router.post('/provision', async (req, res, next) => {
       throw new AppError('A valid email address is required.', 400);
     }
     if (!planKey || typeof planKey !== 'string') {
-      throw new AppError('planKey is required (starter | growth | business).', 400);
+      throw new AppError('planKey is required (starter | growth | payg).', 400);
     }
 
     logger.info('Manual provision request', { email, planKey, paymentId });

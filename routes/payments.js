@@ -26,7 +26,7 @@
  */
 
 import express       from 'express';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import jwt           from 'jsonwebtoken';
 import { config }    from '../config/index.js';
 import { JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
@@ -57,14 +57,25 @@ const BILLING_PLANS = {
     intervalCount: 1,
     INR: 499900,
   },
-  business: {
+  payg: {
     planId: 'plan_easydev_business_inr_monthly',
-    productName: 'EasyDev Business Plan',
+    productName: 'EasyDev Pay as you go Plan',
     trialDays: 3,
     interval: 'month',
     intervalCount: 1,
     INR: 1299900,
   },
+};
+
+const PLAN_KEY_ALIASES = {
+  starter: 'starter',
+  free: 'starter',
+  growth: 'growth',
+  pro: 'growth',
+  payg: 'payg',
+  'pay-as-you-go': 'payg',
+  business: 'payg',
+  enterprise: 'payg',
 };
 
 const SUBSCRIPTION_STATUS_MAP = {
@@ -149,11 +160,17 @@ function resolveProductId(body) {
 }
 
 function getBillingPlan(planKey) {
-  const plan = BILLING_PLANS[planKey?.toLowerCase()];
+  const normalizedPlanKey = typeof planKey === 'string' ? PLAN_KEY_ALIASES[planKey.toLowerCase().trim()] : null;
+  const plan = normalizedPlanKey ? BILLING_PLANS[normalizedPlanKey] : null;
   if (!plan) {
     throw new AppError(`Invalid plan key: ${planKey}`, 400);
   }
   return plan;
+}
+
+function normalizePlanKey(planKey) {
+  if (typeof planKey !== 'string') return null;
+  return PLAN_KEY_ALIASES[planKey.toLowerCase().trim()] || null;
 }
 
 function normalizeEmail(email) {
@@ -252,6 +269,61 @@ function uniqueById(items) {
   });
 }
 
+function hasValidCommunicationApiKey(req) {
+  const expected = config.products?.['easydev-communication']?.apiKey;
+  const provided = typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'].trim() : '';
+
+  if (!expected || !provided) {
+    return false;
+  }
+
+  const a = Buffer.from(provided.padEnd(expected.length));
+  const b = Buffer.from(expected.padEnd(provided.length));
+
+  return timingSafeEqual(a, b) && provided === expected;
+}
+
+function compareDateDesc(left, right) {
+  const leftMs = left ? Date.parse(left) : Number.NaN;
+  const rightMs = right ? Date.parse(right) : Number.NaN;
+
+  if (!Number.isFinite(leftMs) && !Number.isFinite(rightMs)) return 0;
+  if (!Number.isFinite(leftMs)) return 1;
+  if (!Number.isFinite(rightMs)) return -1;
+
+  return rightMs - leftMs;
+}
+
+function pickPreferredProduct(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return null;
+  }
+
+  const statusRank = {
+    active: 0,
+    trial: 1,
+    past_due: 2,
+    cancelled: 3,
+    expired: 4,
+  };
+
+  return [...items].sort((left, right) => {
+    const leftRank = statusRank[left?.status] ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = statusRank[right?.status] ?? Number.MAX_SAFE_INTEGER;
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    const periodComparison = compareDateDesc(left?.currentPeriodEnd, right?.currentPeriodEnd);
+    if (periodComparison !== 0) {
+      return periodComparison;
+    }
+
+    return compareDateDesc(left?.trialEndsAt, right?.trialEndsAt);
+  })[0] ?? null;
+}
+
 function resolveLegacyPeriod(from, interval, intervalCount = 1, trialDays = 0) {
   const createdAt = new Date(from);
   if (Number.isNaN(createdAt.getTime())) {
@@ -335,6 +407,9 @@ function normalizeCustomerProduct(subscription) {
   const normalizedPlanId = typeof plan.id === 'string' && plan.id.trim()
     ? plan.id.trim()
     : (typeof metadata.planId === 'string' && metadata.planId.trim() ? metadata.planId.trim() : null);
+  const normalizedPlanKey = normalizePlanKey(metadata.planKey)
+    || (normalizedPlanId ? PLAN_KEY_BY_PLAN_ID[normalizedPlanId] || null : null);
+  const configuredPlan = normalizedPlanKey ? BILLING_PLANS[normalizedPlanKey] : null;
   const { productId, productConfig } = resolveConfiguredProduct(rawProductId, planApplicationId);
   const launchSlug = productConfig?.iamProvisioning?.applicationSlug || planApplicationId || productId || null;
 
@@ -347,8 +422,8 @@ function normalizeCustomerProduct(subscription) {
     productName: productConfig?.name || plan.name || productId || 'Purchased product',
     productDescription: productConfig?.description || plan.description || '',
     planId: normalizedPlanId,
-    planKey: normalizedPlanId ? PLAN_KEY_BY_PLAN_ID[normalizedPlanId] || null : null,
-    planName: plan.name || normalizedPlanId || 'Plan',
+    planKey: normalizedPlanKey,
+    planName: configuredPlan?.productName || plan.name || normalizedPlanId || 'Plan',
     price: toMajorCurrencyUnit(plan.amount, plan.currency),
     currency: plan.currency || 'INR',
     status: mapSubscriptionStatus(subscription?.status),
@@ -374,9 +449,8 @@ function normalizeLegacyTransactionProduct(transaction) {
   const rawPlanKey = typeof metadata.planKey === 'string' && metadata.planKey.trim()
     ? metadata.planKey.trim().toLowerCase()
     : null;
-  const planKey = rawPlanKey && BILLING_PLANS[rawPlanKey]
-    ? rawPlanKey
-    : (normalizedPlanId ? PLAN_KEY_BY_PLAN_ID[normalizedPlanId] || null : null);
+  const planKey = normalizePlanKey(rawPlanKey)
+    || (normalizedPlanId ? PLAN_KEY_BY_PLAN_ID[normalizedPlanId] || null : null);
   const configuredPlan = planKey ? BILLING_PLANS[planKey] : null;
   const { productId, productConfig } = resolveConfiguredProduct(rawProductId, null);
   const launchSlug = productConfig?.iamProvisioning?.applicationSlug || productId || null;
@@ -497,7 +571,8 @@ router.post('/initiate', async (req, res, next) => {
     const productId = resolveProductId(req.body);
 
     const p        = provider.toUpperCase();
-    const plan     = getBillingPlan(planKey);
+    const normalizedPlanKey = normalizePlanKey(planKey);
+    const plan     = getBillingPlan(normalizedPlanKey);
     const orderId  = randomUUID();
     const idempKey = randomUUID();
     const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
@@ -524,7 +599,7 @@ router.post('/initiate', async (req, res, next) => {
           recurringMode: p === 'RAZORPAY',
           tenantId,
           productId,
-          planKey,
+          planKey: normalizedPlanKey,
           planId: plan.planId,
           customerEmail: checkoutIdentity.customerEmail,
           customerId,
@@ -555,7 +630,7 @@ router.post('/initiate', async (req, res, next) => {
       transactionId: pmData.transactionId,
       attemptId:     option.attemptId,
       productId,
-      planKey,
+      planKey: normalizedPlanKey,
       customerEmail: checkoutIdentity.customerEmail,
       customerId,
     });
@@ -644,7 +719,7 @@ router.post('/verify', async (req, res, next) => {
       productId:    resolveProductId({ productId: req.body.productId || pending.productId }),
       name:         name || email,
       email:        String(email),
-      planKey:      planKey || pending.planKey || 'growth',
+      planKey:      normalizePlanKey(planKey) || pending.planKey || 'growth',
       paymentId:    p === 'RAZORPAY' ? paymentId : token,
       businessName,
       externalId,
@@ -720,6 +795,87 @@ router.get(
           items,
           total: items.length,
         },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.get(
+  '/internal/products/:productId/current',
+  async (req, res, next) => {
+    try {
+      if (!hasValidCommunicationApiKey(req)) {
+        throw new AppError('Unauthorized.', 401);
+      }
+      if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+      if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+
+      const productId = typeof req.params?.productId === 'string' ? req.params.productId.trim() : '';
+      const email = typeof req.query?.email === 'string' ? normalizeEmail(req.query.email) : '';
+      const iamUserId = typeof req.query?.iamUserId === 'string' ? req.query.iamUserId.trim() : '';
+      const tenantId = typeof req.query?.tenantId === 'string' ? req.query.tenantId.trim() : req.headers['x-tenant-id'];
+
+      if (!productId) {
+        throw new AppError('productId is required.', 400);
+      }
+      if (!config.products?.[productId]) {
+        throw new AppError(`Unknown productId "${productId}".`, 400);
+      }
+      if (!email && !iamUserId) {
+        throw new AppError('Provide email or iamUserId.', 400);
+      }
+
+      const customerIds = uniqueById([
+        iamUserId ? { id: iamUserId } : null,
+        email ? { id: buildCheckoutCustomerId(email) } : null,
+      ].filter(Boolean)).map((item) => item.id);
+
+      const subscriptionResults = await Promise.all(customerIds.map((customerId) =>
+        apiCall(
+          `${pmUrl()}/api/v1/subscriptions`,
+          { method: 'GET', headers: pmServiceHeaders(tenantId, customerId, email || undefined) },
+        )
+      ));
+
+      const failedSubscription = subscriptionResults.find((result) => result.error);
+      if (failedSubscription) {
+        logger.error('internal customer product lookup failed', { status: failedSubscription.status, productId, iamUserId, email });
+        throw new AppError(failedSubscription.data?.message || 'Failed to fetch subscriptions.', failedSubscription.status || 502);
+      }
+
+      let items = uniqueById(subscriptionResults.flatMap((result) => extractCollection(result.data).items))
+        .map(normalizeCustomerProduct)
+        .filter((item) => item.productId === productId);
+
+      if (items.length === 0) {
+        const transactionResults = await Promise.all(customerIds.map((customerId) =>
+          apiCall(
+            `${pmUrl()}/api/v1/payments`,
+            { method: 'GET', headers: pmServiceHeaders(tenantId, customerId, email || undefined) },
+          )
+        ));
+
+        const failedTransaction = transactionResults.find((result) => result.error);
+        if (failedTransaction) {
+          logger.error('internal customer product transaction fallback failed', { status: failedTransaction.status, productId, iamUserId, email });
+          throw new AppError(failedTransaction.data?.message || 'Failed to fetch subscriptions.', failedTransaction.status || 502);
+        }
+
+        items = uniqueById(
+          transactionResults
+            .flatMap((result) => extractCollection(result.data).items)
+            .map(normalizeLegacyTransactionProduct)
+            .filter(Boolean)
+            .filter((item) => item.productId === productId),
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Product subscription retrieved.',
+        data: pickPreferredProduct(items),
       });
     } catch (err) {
       next(err);
@@ -976,7 +1132,7 @@ router.patch(
         throw new AppError('This purchase must be backfilled to a subscription before its plan can be changed.', 409);
       }
 
-      const requestedPlanKey = typeof req.body?.planKey === 'string' ? req.body.planKey.trim().toLowerCase() : '';
+      const requestedPlanKey = normalizePlanKey(req.body?.planKey) || '';
       const targetPlan = getBillingPlan(requestedPlanKey);
       const tenantId = req.headers['x-tenant-id'];
       const result = await apiCall(

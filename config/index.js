@@ -136,10 +136,14 @@ export const config = {
 			},
 			// EasyDev plan key → Communication platform plan enum
 			planMap: {
-				starter:  'pro',
-				growth:   'pro',
-				business: 'enterprise',
-				free:     'free',
+				starter:         'starter',
+				growth:          'growth',
+				payg:            'payg',
+				'pay-as-you-go': 'payg',
+				business:        'payg',
+				free:            'starter',
+				pro:             'growth',
+				enterprise:      'payg',
 			},
 		},
 		// Add future products here, e.g.:

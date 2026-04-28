@@ -228,7 +228,7 @@ async function _provisionCommunication(productCfg, data) {
   }
 
   // Map the EasyDev plan key to the Communication platform plan enum
-  const communicationPlan = productCfg.planMap?.[data.planKey?.toLowerCase()] ?? 'pro';
+  const communicationPlan = productCfg.planMap?.[data.planKey?.toLowerCase()] ?? 'growth';
 
   const payload = {
     name:         data.name,
