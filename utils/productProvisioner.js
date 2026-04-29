@@ -228,7 +228,15 @@ async function _provisionCommunication(productCfg, data) {
   }
 
   // Map the EasyDev plan key to the Communication platform plan enum
-  const communicationPlan = productCfg.planMap?.[data.planKey?.toLowerCase()] ?? 'growth';
+  const requestedPlanKey = typeof data.planKey === 'string' ? data.planKey.trim().toLowerCase() : '';
+  if (!requestedPlanKey) {
+    throw new AppError('planKey is required for communication provisioning.', 400);
+  }
+
+  const communicationPlan = productCfg.planMap?.[requestedPlanKey];
+  if (!communicationPlan) {
+    throw new AppError('Unsupported planKey for communication provisioning. Use starter, growth, or payg.', 400);
+  }
 
   const payload = {
     name:         data.name,

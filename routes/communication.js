@@ -75,6 +75,9 @@ function getBearerAuthorization(req) {
 router.post('/provision', async (req, res, next) => {
   try {
     const { name, email, planKey, paymentId, businessName, externalId } = req.body;
+    const requestedPlanKey = typeof planKey === 'string' ? planKey.toLowerCase().trim() : '';
+    const communicationPlanMap = config.products?.['easydev-communication']?.planMap || {};
+    const normalizedPlanKey = communicationPlanMap[requestedPlanKey] || null;
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       throw new AppError('name is required.', 400);
@@ -82,16 +85,19 @@ router.post('/provision', async (req, res, next) => {
     if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new AppError('A valid email address is required.', 400);
     }
-    if (!planKey || typeof planKey !== 'string') {
+    if (!requestedPlanKey) {
       throw new AppError('planKey is required (starter | growth | payg).', 400);
     }
+    if (!normalizedPlanKey) {
+      throw new AppError('Unsupported planKey. Use starter, growth, or payg.', 400);
+    }
 
-    logger.info('Manual provision request', { email, planKey, paymentId });
+    logger.info('Manual provision request', { email, planKey: normalizedPlanKey, paymentId });
 
     const result = await provision('easydev-communication', {
       name:         name.trim(),
       email:        email.toLowerCase().trim(),
-      planKey:      planKey.toLowerCase().trim(),
+      planKey:      normalizedPlanKey,
       paymentId,
       businessName: businessName?.trim() || name.trim(),
       externalId,

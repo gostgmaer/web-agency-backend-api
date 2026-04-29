@@ -60,7 +60,7 @@ const BILLING_PLANS = {
   payg: {
     planId: 'plan_easydev_business_inr_monthly',
     productName: 'EasyDev Pay as you go Plan',
-    trialDays: 3,
+    trialDays: 0,
     interval: 'month',
     intervalCount: 1,
     INR: 1299900,
