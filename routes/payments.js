@@ -300,8 +300,8 @@ function pickPreferredProduct(items) {
   }
 
   const statusRank = {
-    active: 0,
-    trial: 1,
+    trial: 0,
+    active: 1,
     past_due: 2,
     cancelled: 3,
     expired: 4,
@@ -714,12 +714,16 @@ router.post('/verify', async (req, res, next) => {
     }
 
     pendingOrders.delete(token);
+    const resolvedPlanKey = normalizePlanKey(planKey) || normalizePlanKey(pending.planKey);
+    if (!resolvedPlanKey) {
+      throw new AppError('Unable to resolve planKey for verification. Please restart checkout.', 400);
+    }
 
     return handlePostPayment(res, {
       productId:    resolveProductId({ productId: req.body.productId || pending.productId }),
       name:         name || email,
       email:        String(email),
-      planKey:      normalizePlanKey(planKey) || pending.planKey || 'growth',
+      planKey:      resolvedPlanKey,
       paymentId:    p === 'RAZORPAY' ? paymentId : token,
       businessName,
       externalId,

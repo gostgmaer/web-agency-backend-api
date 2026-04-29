@@ -2,6 +2,25 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+function resolveServiceOrigin(rawUrl, fallback = "") {
+	const candidate = String(rawUrl || fallback || "").trim();
+	if (!candidate) return "";
+
+	const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)
+		? candidate
+		: `http://${candidate}`;
+
+	try {
+		const parsed = new URL(withScheme);
+		return `${parsed.protocol}//${parsed.host}`;
+	} catch {
+		return "";
+	}
+}
+
+const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL);
+const defaultIamServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL, "http://localhost:3100");
+
 const isServerless = Boolean(
 	process.env.VERCEL ||
 	process.env.AWS_LAMBDA_FUNCTION_NAME ||
@@ -40,14 +59,14 @@ export const config = {
 
 	// External microservice base URLs
 	fileUpload: { serviceUrl: process.env.FILE_UPLOAD_SERVICE_URL },
-	auth: { serviceUrl: process.env.AUTH_SERVICE_URL },
+	auth: { serviceUrl: authServiceOrigin },
 
 	// ─── IAM Service ─────────────────────────────────────────────────────────
 	// Same service as config.auth — AUTH_SERVICE_URL is the single source of truth.
 	// iam.serviceUrl is used for SSO token generation calls.
 	// No per-product APP_ID env vars — the key in config.products IS the IAM slug.
 	iam: {
-		serviceUrl: process.env.AUTH_SERVICE_URL || 'http://localhost:3100',
+		serviceUrl: defaultIamServiceOrigin,
 		adminEmail: process.env.IAM_ADMIN_EMAIL || '',
 		adminPassword: process.env.IAM_ADMIN_PASSWORD || '',
 		adminJwt: process.env.IAM_ADMIN_JWT || '',
