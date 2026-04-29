@@ -5,6 +5,7 @@ import { apiCall } from '../lib/axiosCall.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
+const manualProxyJsonParser = express.json({ limit: '1mb' });
 
 /**
  * Returns a 503 handler for when a service URL is not configured.
@@ -161,6 +162,39 @@ const communicationProxyTarget = config.communication?.proxyTarget ?? null;
 const communicationProxyPath   = config.communication?.proxyPath   ?? '/api/v1';
 
 if (communicationProxyTarget) {
+  router.get('/customer/channels/email/providers', async (req, res) => {
+    const response = await apiCall(customerChannelUrl('/channels/email/providers'), {
+      method: 'GET',
+      headers: customerProxyHeaders(req),
+    });
+
+    if (response.error) {
+      return res.status(response.status ?? 502).json(response.data ?? {
+        success: false,
+        message: 'Failed to fetch email provider settings.',
+      });
+    }
+
+    return res.status(response.status ?? 200).json(response.data);
+  });
+
+  router.patch('/customer/channels/email/providers/:providerKey', manualProxyJsonParser, async (req, res) => {
+    const response = await apiCall(customerChannelUrl(`/channels/email/providers/${req.params.providerKey}`), {
+      method: 'PATCH',
+      headers: customerProxyHeaders(req),
+      data: req.body,
+    });
+
+    if (response.error) {
+      return res.status(response.status ?? 502).json(response.data ?? {
+        success: false,
+        message: 'Failed to update email provider settings.',
+      });
+    }
+
+    return res.status(response.status ?? 200).json(response.data);
+  });
+
   router.get('/customer/channels', async (req, res) => {
     const response = await apiCall(customerChannelUrl('/channels'), {
       method: 'GET',
@@ -183,7 +217,7 @@ if (communicationProxyTarget) {
     return res.json(channels);
   });
 
-  router.post('/customer/channels', async (req, res) => {
+  router.post('/customer/channels', manualProxyJsonParser, async (req, res) => {
     const payload = buildCustomerChannelPayload(req.body);
     if (payload.error) {
       return res.status(400).json({
