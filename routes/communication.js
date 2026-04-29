@@ -246,6 +246,89 @@ router.get('/admin/providers', async (req, res, next) => {
   }
 });
 
+router.get('/admin/ai-settings', async (req, res, next) => {
+  try {
+    const response = await axios.get(`${getCommunicationApiBase()}/admin/ai-settings`, {
+      headers: {
+        Authorization: getBearerAuthorization(req),
+      },
+      timeout: 10_000,
+    });
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to fetch AI Communication AI settings.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
+router.patch('/admin/ai-settings', async (req, res, next) => {
+  try {
+    const response = await axios.patch(
+      `${getCommunicationApiBase()}/admin/ai-settings`,
+      req.body,
+      {
+        headers: {
+          Authorization: getBearerAuthorization(req),
+          'Content-Type': 'application/json',
+        },
+        timeout: 10_000,
+      },
+    );
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to update AI Communication AI settings.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
+router.get('/admin/usage', async (req, res, next) => {
+  try {
+    const response = await axios.get(`${getCommunicationApiBase()}/admin/usage`, {
+      headers: {
+        Authorization: getBearerAuthorization(req),
+      },
+      params: req.query,
+      timeout: 15_000,
+    });
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to fetch AI Communication usage analytics.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
+router.get('/admin/reply-stats', async (req, res, next) => {
+  try {
+    const response = await axios.get(`${getCommunicationApiBase()}/admin/reply-stats`, {
+      headers: {
+        Authorization: getBearerAuthorization(req),
+      },
+      params: req.query,
+      timeout: 15_000,
+    });
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to fetch AI Communication reply analytics.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
 router.get('/admin/providers/health', async (req, res, next) => {
   try {
     const response = await axios.get(`${getCommunicationApiBase()}/admin/providers/health`, {
