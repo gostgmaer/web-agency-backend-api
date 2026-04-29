@@ -73,7 +73,7 @@ Direct all login requests to the shared IAM service behind `AUTH_SERVICE_URL`.
 Recommended local target in this workspace:
 
 ```text
-AUTH_SERVICE_URL=http://localhost:3100
+AUTH_SERVICE_URL=http://localhost:4002
 ```
 
 | Action | Endpoint |

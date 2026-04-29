@@ -10,7 +10,7 @@ const resolvedApplicationIds = new Map();
 const resolvedRoleIds = new Map();
 
 function iamBaseUrl() {
-  return `${config.iam?.serviceUrl || 'http://localhost:3100'}/api/v1/iam`;
+  return `${config.iam?.serviceUrl || 'http://localhost:4002'}/api/v1/iam`;
 }
 
 function unwrapPayload(body) {

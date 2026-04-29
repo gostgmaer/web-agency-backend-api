@@ -52,7 +52,7 @@ FRONTEND_URL=http://localhost:3000
 CORS_ORIGINS=http://localhost:3000,http://localhost:3002
 MONGODB_URI=mongodb://localhost:27017/web-agency
 
-AUTH_SERVICE_URL=http://localhost:3100
+AUTH_SERVICE_URL=http://localhost:4002
 FILE_UPLOAD_SERVICE_URL=http://localhost:4001
 COMMUNICATION_URL=http://localhost:3001/api/v1
 PAYMENT_SERVICE_URL=http://localhost:3200

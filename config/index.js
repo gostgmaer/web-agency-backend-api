@@ -19,7 +19,7 @@ function resolveServiceOrigin(rawUrl, fallback = "") {
 }
 
 const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL);
-const defaultIamServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL, "http://localhost:3100");
+const defaultIamServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL, "http://localhost:4002");
 
 const isServerless = Boolean(
 	process.env.VERCEL ||

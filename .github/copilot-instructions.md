@@ -23,7 +23,7 @@ Workspace source: `../multi-tannet-auth-services`
 Recommended local URL:
 
 ```text
-http://localhost:3100/api/v1/iam
+http://localhost:4002/api/v1/iam
 ```
 
 Rules:
@@ -158,7 +158,7 @@ PORT=3500
 JWT_ACCESS_SECRET=match-iam-JWT_SECRET
 JWT_ISSUER=user-auth-service
 JWT_AUDIENCE=dashboard-app
-AUTH_SERVICE_URL=http://localhost:3100
+AUTH_SERVICE_URL=http://localhost:4002
 PAYMENT_SERVICE_URL=http://localhost:3200
 COMMUNICATION_SERVICE_URL=http://localhost:3001
 FILE_UPLOAD_SERVICE_URL=http://localhost:4001
