@@ -166,7 +166,6 @@ jobs:
             set -euo pipefail
 
             DEPLOY_DIR="/home/opc/easydev-backends/deploy/oracle-vm"
-            CORE_ENV="${DEPLOY_DIR}/.env.core"
             APPS_ENV="${DEPLOY_DIR}/.env.apps"
             ARCHIVE_PATH="/tmp/${IMAGE_ARCHIVE}"
 
@@ -202,6 +201,25 @@ jobs:
               fi
             }
 
+            wait_for_health() {
+              local container_name="$1"
+              local retries="${2:-50}"
+              local sleep_seconds="${3:-5}"
+
+              for ((i=1; i<=retries; i++)); do
+                state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_name" 2>/dev/null || true)"
+                if [[ "$state" == "healthy" || "$state" == "running" ]]; then
+                  echo "Healthy: $container_name ($state)"
+                  return 0
+                fi
+                sleep "$sleep_seconds"
+              done
+
+              echo "Container did not become healthy in time: $container_name"
+              docker logs --tail 120 "$container_name" || true
+              return 1
+            }
+
             if [[ ! -f "$ARCHIVE_PATH" ]]; then
               echo "Missing image archive: $ARCHIVE_PATH"
               exit 1
@@ -210,19 +228,16 @@ jobs:
             docker load -i "$ARCHIVE_PATH" >/dev/null
             rm -f "$ARCHIVE_PATH"
 
-            ensure_key "$CORE_ENV" "IAM_IMAGE" "easydev-iam-service:latest"
-            ensure_key "$CORE_ENV" "PAYMENT_IMAGE" "easydev-payment-service:latest"
             ensure_key "$APPS_ENV" "GATEWAY_IMAGE" "easydev-gateway:latest"
-            ensure_key "$APPS_ENV" "COMMUNICATION_IMAGE" "easydev-ai-communication-backend:latest"
-            ensure_key "$APPS_ENV" "IAM_PUBLIC_HOST" "iam-service.easydev.in"
-            ensure_key "$APPS_ENV" "PAYMENT_PUBLIC_HOST" "payment.easydev.in"
-            ensure_key "$APPS_ENV" "GATEWAY_PUBLIC_HOST" "gateway-server.easydev.in"
+            ensure_key "$APPS_ENV" "GATEWAY_IMAGE_BACKUP" ""
 
             set_with_backup "$APPS_ENV" "GATEWAY_IMAGE" "GATEWAY_IMAGE_BACKUP" "$NEW_IMAGE"
 
             cd "$DEPLOY_DIR"
-            chmod +x deploy.sh check-health.sh
-            SKIP_PULL=true ./deploy.sh
+            docker compose --env-file .env.apps -f compose.apps.yml up -d --no-deps web-agency-backend
+            wait_for_health easydev-web-agency-backend
+
+            echo "Gateway deployed without restarting IAM, payment, or communication services."
 
   cleanup:
     name: cleanup
