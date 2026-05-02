@@ -14,9 +14,73 @@ env:
   IMAGE_ARCHIVE: easydev-gateway-latest.tar.gz
 
 jobs:
+  changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    outputs:
+      code_changed: ${{ steps.filter.outputs.code }}
+      dependencies_changed: ${{ steps.filter.outputs.dependencies }}
+      docker_changed: ${{ steps.filter.outputs.docker }}
+      vulnerability_required: ${{ steps.compute.outputs.vulnerability_required }}
+      build_required: ${{ steps.compute.outputs.build_required }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            code:
+              - 'app.js'
+              - 'server.js'
+              - 'cluster.js'
+              - 'config/**'
+              - 'controllers/**'
+              - 'middleware/**'
+              - 'models/**'
+              - 'routes/**'
+              - 'services/**'
+              - 'utils/**'
+              - 'validation/**'
+              - '*.js'
+            dependencies:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+            docker:
+              - 'Dockerfile'
+              - 'deploy/oracle-vm/compose*.yml'
+
+      - name: Compute pipeline requirements
+        id: compute
+        shell: bash
+        env:
+          CODE_CHANGED: ${{ steps.filter.outputs.code }}
+          DEPENDENCIES_CHANGED: ${{ steps.filter.outputs.dependencies }}
+          DOCKER_CHANGED: ${{ steps.filter.outputs.docker }}
+        run: |
+          set -euo pipefail
+
+          vulnerability_required=false
+          build_required=false
+
+          if [[ "${CODE_CHANGED}" == "true" || "${DEPENDENCIES_CHANGED}" == "true" ]]; then
+            vulnerability_required=true
+          fi
+
+          if [[ "${CODE_CHANGED}" == "true" || "${DEPENDENCIES_CHANGED}" == "true" || "${DOCKER_CHANGED}" == "true" ]]; then
+            build_required=true
+          fi
+
+          echo "vulnerability_required=${vulnerability_required}" >> "$GITHUB_OUTPUT"
+          echo "build_required=${build_required}" >> "$GITHUB_OUTPUT"
+
   code-quality:
     name: code-quality
+    if: needs.changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
+    needs: changes
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,8 +111,9 @@ jobs:
 
   vulnerability:
     name: vulnerability
+    if: needs.changes.outputs.vulnerability_required == 'true' && (needs.code-quality.result == 'success' || needs.code-quality.result == 'skipped')
     runs-on: ubuntu-latest
-    needs: code-quality
+    needs: [changes, code-quality]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,8 +151,9 @@ jobs:
 
   build:
     name: build
+    if: needs.changes.outputs.build_required == 'true' && (needs.vulnerability.result == 'success' || needs.vulnerability.result == 'skipped')
     runs-on: ubuntu-latest
-    needs: vulnerability
+    needs: [changes, vulnerability]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -145,18 +211,20 @@ jobs:
 
   deploy:
     name: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-latest
-    needs: build
+    needs: [changes, build]
     environment: production
     steps:
       - name: Download image archive
+        if: needs.changes.outputs.build_required == 'true'
         uses: actions/download-artifact@v4
         with:
           name: gateway-image-archive
           path: .
 
       - name: Copy image archive to Oracle VM
+        if: needs.changes.outputs.build_required == 'true'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -170,17 +238,19 @@ jobs:
         env:
           NEW_IMAGE: ${{ env.NEW_IMAGE }}
           IMAGE_ARCHIVE: ${{ env.IMAGE_ARCHIVE }}
+          BUILD_REQUIRED: ${{ needs.changes.outputs.build_required }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: NEW_IMAGE,IMAGE_ARCHIVE
+          envs: NEW_IMAGE,IMAGE_ARCHIVE,BUILD_REQUIRED
           script: |
             set -euo pipefail
 
             DEPLOY_DIR="/home/opc/easydev-backends/deploy/oracle-vm"
             APPS_ENV="${DEPLOY_DIR}/.env.apps"
             ARCHIVE_PATH="/tmp/${IMAGE_ARCHIVE}"
+            BUILD_REQUIRED="${BUILD_REQUIRED:-true}"
 
             ensure_key() {
               local file="$1"
@@ -233,13 +303,17 @@ jobs:
               return 1
             }
 
-            if [[ ! -f "$ARCHIVE_PATH" ]]; then
-              echo "Missing image archive: $ARCHIVE_PATH"
-              exit 1
-            fi
+            if [[ "$BUILD_REQUIRED" == "true" ]]; then
+              if [[ ! -f "$ARCHIVE_PATH" ]]; then
+                echo "Missing image archive: $ARCHIVE_PATH"
+                exit 1
+              fi
 
-            docker load -i "$ARCHIVE_PATH" >/dev/null
-            rm -f "$ARCHIVE_PATH"
+              docker load -i "$ARCHIVE_PATH" >/dev/null
+              rm -f "$ARCHIVE_PATH"
+            else
+              echo "No build-required changes detected; deploying using existing image reference."
+            fi
 
             ensure_key "$APPS_ENV" "GATEWAY_IMAGE" "easydev-gateway:latest"
             ensure_key "$APPS_ENV" "GATEWAY_IMAGE_BACKUP" ""
