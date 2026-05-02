@@ -1,21 +1,79 @@
-name: Gateway Build And Deploy
+name: Gateway Service Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
 
 permissions:
-  contents: read
+  contents: write
+
+env:
+  NEW_IMAGE: easydev-gateway:sha-${{ github.sha }}
+  IMAGE_ARCHIVE: easydev-gateway-${{ github.sha }}.tar.gz
 
 jobs:
-  build-transfer-deploy:
+  code-quality:
+    name: code-quality
     runs-on: ubuntu-latest
-    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    env:
-      NEW_IMAGE: easydev-gateway:sha-${{ github.sha }}
-      IMAGE_ARCHIVE: easydev-gateway-${{ github.sha }}.tar.gz
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
 
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: JavaScript syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            node --check "$file"
+          done < <(git ls-files '*.js')
+
+  vulnerability:
+    name: vulnerability
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Dependency vulnerability scan
+        run: pnpm audit --prod --audit-level=critical
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: vulnerability
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,7 +93,30 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Archive Docker image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: docker save "${NEW_IMAGE}" | gzip > "${IMAGE_ARCHIVE}"
+
+      - name: Upload image archive
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-image-archive
+          path: ${{ env.IMAGE_ARCHIVE }}
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+    steps:
+      - name: Download image archive
+        uses: actions/download-artifact@v4
+        with:
+          name: gateway-image-archive
+          path: .
 
       - name: Copy image archive to Oracle VM
         uses: appleboy/scp-action@v0.1.7
@@ -117,3 +198,97 @@ jobs:
             cd "$DEPLOY_DIR"
             chmod +x deploy.sh check-health.sh
             SKIP_PULL=true ./deploy.sh
+
+  cleanup:
+    name: cleanup
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: deploy
+    environment: production
+    steps:
+      - name: Cleanup old gateway images on Oracle VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="/home/opc/easydev-backends/deploy/oracle-vm"
+            APPS_ENV="${DEPLOY_DIR}/.env.apps"
+            CONTAINER="easydev-web-agency-backend"
+            BACKUP_REF="$(grep '^GATEWAY_IMAGE_BACKUP=' "$APPS_ENV" | tail -n 1 | cut -d= -f2- || true)"
+
+            cleanup_repo_keep_current_and_backup() {
+              local container_name="$1"
+              local backup_ref="$2"
+              local current_ref current_repo current_id backup_id
+
+              current_ref="$(docker inspect --format '{{.Config.Image}}' "$container_name")"
+              current_repo="${current_ref%:*}"
+              current_id="$(docker inspect --format '{{.Image}}' "$container_name")"
+              backup_id="$(docker image inspect --format '{{.Id}}' "$backup_ref" 2>/dev/null || true)"
+
+              while IFS=' ' read -r image_ref image_id; do
+                [[ -z "$image_ref" || -z "$image_id" ]] && continue
+                if [[ "$image_id" == "$current_id" ]]; then
+                  continue
+                fi
+                if [[ -n "$backup_id" && "$image_id" == "$backup_id" ]]; then
+                  continue
+                fi
+                docker rmi "$image_ref" >/dev/null 2>&1 || true
+              done < <(docker images "$current_repo" --format '{{.Repository}}:{{.Tag}} {{.ID}}' | sort -u)
+            }
+
+            if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+              cleanup_repo_keep_current_and_backup "$CONTAINER" "$BACKUP_REF"
+            fi
+
+            docker image prune -f >/dev/null 2>&1 || true
+
+  tag:
+    name: tag
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: cleanup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get next tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          LAST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+          if [[ "$LAST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+          else
+            MAJOR=0
+            MINOR=0
+            PATCH=0
+          fi
+
+          NEXT_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "NEW_TAG=$NEXT_TAG" >> "$GITHUB_ENV"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.NEW_TAG }}
+          name: Release ${{ env.NEW_TAG }}
+          generate_release_notes: true
