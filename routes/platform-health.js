@@ -11,10 +11,113 @@
 import express from "express";
 import { config } from "../config/index.js";
 import logger from "../utils/logger.js";
+import mongoose from "mongoose";
 
 const router = express.Router();
 
 const PING_TIMEOUT_MS = 8_000;
+
+function normalizeCheckStatus(value) {
+  if (typeof value === "boolean") return value ? "ok" : "error";
+
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return "unknown";
+
+  if (["ok", "up", "healthy", "connected", "ready", "alive", "running", "success"].includes(raw)) {
+    return "ok";
+  }
+  if (["error", "down", "unhealthy", "disconnected", "failed", "fail", "unreachable"].includes(raw)) {
+    return "error";
+  }
+  if (["degraded", "warning", "warn"].includes(raw)) {
+    return "degraded";
+  }
+  if (["disabled", "inactive", "off", "none", "n/a", "na"].includes(raw)) {
+    return "disabled";
+  }
+
+  return raw;
+}
+
+function normalizeTopLevelStatus(value) {
+  const status = normalizeCheckStatus(value);
+  if (status === "unknown") return "ok";
+  if (status === "disabled") return "ok";
+  return status;
+}
+
+function normaliseChecks(rawChecks) {
+  if (!rawChecks || typeof rawChecks !== "object" || Array.isArray(rawChecks)) return undefined;
+
+  return Object.fromEntries(
+    Object.entries(rawChecks).map(([k, v]) => {
+      const raw = typeof v === "object" && v !== null && "status" in v ? v.status : v;
+      return [k, normalizeCheckStatus(raw)];
+    }),
+  );
+}
+
+function extractInfraChecks(payload, baseChecks = {}) {
+  const checks = { ...(baseChecks || {}) };
+  const aliases = {
+    database: ["database", "db"],
+    redis: ["redis"],
+    kafka: ["kafka"],
+  };
+
+  for (const [targetKey, keys] of Object.entries(aliases)) {
+    if (checks[targetKey]) continue;
+    for (const key of keys) {
+      if (!(key in (payload || {}))) continue;
+      const value = payload[key];
+      const raw = typeof value === "object" && value !== null && "status" in value ? value.status : value;
+      checks[targetKey] = normalizeCheckStatus(raw);
+      break;
+    }
+  }
+
+  return checks;
+}
+
+async function getGatewayServiceHealth() {
+  const checks = {
+    database: mongoose.connection.readyState === 1 ? "ok" : "error",
+    redis: config.redis?.enabled ? "unknown" : "disabled",
+    kafka: process.env.ENABLE_KAFKA === "true" ? "unknown" : "disabled",
+  };
+
+  if (config.redis?.enabled && config.redis?.url) {
+    try {
+      const { default: Redis } = await import("ioredis");
+      const redis = new Redis(config.redis.url, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 1,
+        connectTimeout: 2_000,
+      });
+      try {
+        await redis.connect();
+        const pong = await redis.ping();
+        checks.redis = normalizeCheckStatus(pong);
+      } finally {
+        await redis.quit().catch(() => {});
+      }
+    } catch {
+      checks.redis = "error";
+    }
+  }
+
+  const status = checks.database === "error" || checks.redis === "error" || checks.kafka === "error"
+    ? "degraded"
+    : "ok";
+
+  return {
+    name: "Gateway Service",
+    status,
+    checks,
+    latencyMs: 0,
+    timestamp: new Date().toISOString(),
+  };
+}
 
 /**
  * Ping a single URL and return a health summary object.
@@ -38,25 +141,13 @@ async function pingUrl(url, name) {
     // { success, data: { status, checks, ... }, message, timestamp }
     // Others (comm service) return the raw health object directly.
     const payload = body?.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data : body;
-    // Normalise checks: some services use { checks: {...} }, others use { info: {...} } or { details: {...} }
-    // We prefer `checks`, then fall back to `info`, then `details`.
-    // Convert { key: { status: "up" } } → { key: "up" } for display consistency.
-    let checks = payload?.checks ?? payload?.info ?? payload?.details ?? undefined;
-    if (checks && typeof checks === "object" && !Array.isArray(checks)) {
-      // Normalise { key: { status: "up"|"ok" } } → { key: "ok"|<value> }
-      checks = Object.fromEntries(
-        Object.entries(checks).map(([k, v]) => {
-          const raw = typeof v === "object" && v !== null && "status" in v ? v.status : v;
-          return [k, raw === "up" ? "ok" : raw];
-        }),
-      );
-    }
-    // Also normalise root status: "up" → "ok"
-    const normalisedStatus = res.ok ? ((payload?.status === "up" ? "ok" : payload?.status) ?? "ok") : "error";
+    const sourceChecks = payload?.checks ?? payload?.info ?? payload?.details ?? undefined;
+    const checks = extractInfraChecks(payload, normaliseChecks(sourceChecks));
+    const normalisedStatus = res.ok ? normalizeTopLevelStatus(payload?.status) : "error";
     return {
       name,
       status: normalisedStatus,
-      checks,
+      checks: Object.keys(checks).length ? checks : undefined,
       latencyMs,
       timestamp: payload?.timestamp ?? body?.timestamp ?? new Date().toISOString(),
     };
@@ -73,6 +164,8 @@ async function pingUrl(url, name) {
 router.get("/", async (req, res, next) => {
   try {
     const services = [];
+
+    services.push(await getGatewayServiceHealth());
 
     // ── 1. Auth service (IAM Platform) ─────────────────────────────────────
     const authServiceUrl = config.auth?.serviceUrl;
