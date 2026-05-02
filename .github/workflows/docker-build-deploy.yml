@@ -92,6 +92,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -100,11 +103,21 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/arm64
           push: false
           load: true
           tags: ${{ env.NEW_IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify image architecture
+        run: |
+          set -euo pipefail
+          arch="$(docker image inspect "${NEW_IMAGE}" --format '{{.Architecture}}')"
+          if [[ "$arch" != "arm64" ]]; then
+            echo "Expected arm64 image, got: $arch"
+            exit 1
+          fi
 
       - name: Trivy image scan (HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
