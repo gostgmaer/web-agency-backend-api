@@ -8,10 +8,12 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 env:
   NEW_IMAGE: easydev-gateway:latest
   IMAGE_ARCHIVE: easydev-gateway-latest.tar.gz
+  GHCR_PACKAGE: easydev-gateway
 
 jobs:
   changes:
@@ -196,6 +198,34 @@ jobs:
           format: table
           exit-code: '1'
 
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image tags to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_PACKAGE: ${{ env.GHCR_PACKAGE }}
+        run: |
+          set -euo pipefail
+
+          owner_lower="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          package_lower="$(echo "${GHCR_PACKAGE}" | tr '[:upper:]' '[:lower:]')"
+          ghcr_image="ghcr.io/${owner_lower}/${package_lower}"
+          version_tag="build-${GITHUB_RUN_NUMBER}"
+
+          docker tag "${NEW_IMAGE}" "${ghcr_image}:latest"
+          docker tag "${NEW_IMAGE}" "${ghcr_image}:${version_tag}"
+
+          docker push "${ghcr_image}:latest"
+          docker push "${ghcr_image}:${version_tag}"
+
+          echo "Published ${ghcr_image}:latest and ${ghcr_image}:${version_tag}"
+
       - name: Archive Docker image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: docker save "${NEW_IMAGE}" | gzip > "${IMAGE_ARCHIVE}"
@@ -330,6 +360,43 @@ jobs:
             wait_for_health easydev-web-agency-backend
 
             echo "Gateway deployed without restarting dependencies; required dependency health verified."
+
+  package-retention:
+    name: package-retention
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.build_required == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    needs: [changes, build]
+    steps:
+      - name: Keep only latest 5 GHCR versions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_PACKAGE: ${{ env.GHCR_PACKAGE }}
+        run: |
+          set -euo pipefail
+
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          owner_type="$(gh api "/users/${owner}" --jq '.type')"
+
+          if [[ "$owner_type" == "Organization" ]]; then
+            base_path="/orgs/${owner}/packages/container/${GHCR_PACKAGE}"
+          else
+            base_path="/users/${owner}/packages/container/${GHCR_PACKAGE}"
+          fi
+
+          mapfile -t delete_ids < <(
+            gh api "${base_path}/versions?per_page=100" --jq 'sort_by(.created_at) | reverse | .[5:] | .[].id'
+          )
+
+          if [[ "${#delete_ids[@]}" -eq 0 ]]; then
+            echo "No old package versions to delete for ${GHCR_PACKAGE}."
+            exit 0
+          fi
+
+          for version_id in "${delete_ids[@]}"; do
+            gh api --method DELETE "${base_path}/versions/${version_id}" >/dev/null
+            echo "Deleted package version id=${version_id}"
+          done
 
   cleanup:
     name: cleanup
