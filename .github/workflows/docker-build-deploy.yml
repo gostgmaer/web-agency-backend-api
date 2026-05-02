@@ -235,9 +235,12 @@ jobs:
 
             cd "$DEPLOY_DIR"
             docker compose --env-file .env.apps -f compose.apps.yml up -d --no-deps web-agency-backend
+            wait_for_health easydev-iam-platform
+            wait_for_health easydev-payment-service
+            wait_for_health easydev-communication-backend
             wait_for_health easydev-web-agency-backend
 
-            echo "Gateway deployed without restarting IAM, payment, or communication services."
+            echo "Gateway deployed without restarting dependencies; dependency health verified."
 
   cleanup:
     name: cleanup
