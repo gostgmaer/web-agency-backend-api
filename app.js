@@ -104,29 +104,91 @@ app.use(helmet({
 
 // CORS configuration
 const corsOriginsRaw = config.app.corsOrigins ?? [];
-const allowedOrigins = (Array.isArray(corsOriginsRaw) ? corsOriginsRaw : String(corsOriginsRaw).split(","))
-	.map((origin) => origin.trim())
-	.filter(Boolean)
-	.map((origin) => origin.replace(/\/$/, ""));
+
+function normalizeOriginCandidate(origin) {
+  const raw = String(origin || "").trim();
+  if (!raw) return "";
+
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+    ? raw
+    : `${raw.includes("localhost") ? "http" : "https"}://${raw}`;
+
+  try {
+    const parsed = new URL(withScheme);
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function expandOriginVariants(origin) {
+  const normalized = normalizeOriginCandidate(origin);
+  if (!normalized) return [];
+
+  const variants = new Set([normalized]);
+
+  try {
+    const parsed = new URL(normalized);
+    const { protocol, port } = parsed;
+    const hostname = parsed.hostname;
+    const isLocalhost = hostname === "localhost";
+    const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+    const hasRootDomain = hostname.includes(".");
+    const shouldAddWwwVariant = hasRootDomain && !isLocalhost && !isIPv4;
+
+    if (shouldAddWwwVariant) {
+      const alternateHost = hostname.startsWith("www.")
+        ? hostname.slice(4)
+        : `www.${hostname}`;
+      const hostWithPort = port ? `${alternateHost}:${port}` : alternateHost;
+      variants.add(`${protocol}//${hostWithPort}`);
+    }
+  } catch {
+    // Keep only the normalized origin if URL parsing unexpectedly fails.
+  }
+
+  return [...variants];
+}
+
+const configuredOrigins = [
+  ...(Array.isArray(corsOriginsRaw) ? corsOriginsRaw : String(corsOriginsRaw).split(",")),
+  config.app.frontendUrl,
+];
+
+const allowedOrigins = [
+  ...new Set(
+    configuredOrigins
+      .flatMap((origin) => expandOriginVariants(origin))
+      .filter(Boolean)
+  ),
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser clients (no Origin header)
+    if (!origin) return callback(null, true);
+
+    const normalizedOrigin = normalizeOriginCandidate(origin);
+    if (normalizedOrigin && allowedOrigins.includes(normalizedOrigin)) {
+      return callback(null, true);
+    }
+
+    logger.warn("Blocked CORS origin", {
+      origin,
+      normalizedOrigin,
+      allowedOrigins,
+    });
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Request-ID", "X-Tenant-Id", "x-tenant-id"],
+};
 
 app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow non-browser clients (no Origin header)
-      if (!origin) return callback(null, true);
-
-      const normalizedOrigin = origin.replace(/\/$/, "");
-      if (allowedOrigins.includes(normalizedOrigin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Tenant-Id', 'x-tenant-id']
-  })
+  cors(corsOptions)
 );
+app.options("*", cors(corsOptions));
 
 // Apply global rate limiter
 app.use(limiter);
