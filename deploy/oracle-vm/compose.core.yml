@@ -41,7 +41,7 @@ services:
 
   iam-platform:
     image: ${IAM_IMAGE}
-    pull_policy: always
+    pull_policy: never
     container_name: easydev-iam-platform
     restart: unless-stopped
     env_file:
@@ -75,7 +75,7 @@ services:
 
   payment-service:
     image: ${PAYMENT_IMAGE}
-    pull_policy: always
+    pull_policy: never
     container_name: easydev-payment-service
     restart: unless-stopped
     env_file:
@@ -110,7 +110,7 @@ services:
 
   payment-worker:
     image: ${PAYMENT_IMAGE}
-    pull_policy: always
+    pull_policy: never
     container_name: easydev-payment-worker
     restart: unless-stopped
     profiles: ["worker"]

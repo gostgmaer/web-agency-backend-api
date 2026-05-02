@@ -41,7 +41,7 @@ services:
 
   communication-backend:
     image: ${COMMUNICATION_IMAGE}
-    pull_policy: always
+    pull_policy: never
     container_name: easydev-communication-backend
     restart: unless-stopped
     env_file:
@@ -77,7 +77,7 @@ services:
 
   web-agency-backend:
     image: ${GATEWAY_IMAGE}
-    pull_policy: always
+    pull_policy: never
     container_name: easydev-web-agency-backend
     restart: unless-stopped
     env_file:

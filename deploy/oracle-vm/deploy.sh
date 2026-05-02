@@ -6,6 +6,7 @@ cd "$SCRIPT_DIR"
 
 CORE_ENV_FILE="${CORE_ENV_FILE:-.env.core}"
 APPS_ENV_FILE="${APPS_ENV_FILE:-.env.apps}"
+SKIP_PULL="${SKIP_PULL:-true}"
 
 if [[ ! -f "$CORE_ENV_FILE" ]]; then
   echo "Missing $CORE_ENV_FILE"
@@ -115,7 +116,11 @@ backup_running_image easydev-communication-backend
 backup_running_image easydev-web-agency-backend
 
 echo "Deploying core project (IAM + Payment)"
-docker compose --env-file "$CORE_ENV_FILE" -f compose.core.yml pull
+if [[ "$SKIP_PULL" != "true" ]]; then
+  docker compose --env-file "$CORE_ENV_FILE" -f compose.core.yml pull
+else
+  echo "Skipping registry pulls for core project (SKIP_PULL=true)"
+fi
 docker compose --env-file "$CORE_ENV_FILE" -f compose.core.yml up -d --remove-orphans
 
 echo "Ensuring core database schemas exist"
@@ -132,7 +137,11 @@ if ! docker compose --env-file "$CORE_ENV_FILE" -f compose.core.yml exec -T paym
 fi
 
 echo "Deploying app project (Gateway + AI Communication)"
-docker compose --env-file "$APPS_ENV_FILE" -f compose.apps.yml pull
+if [[ "$SKIP_PULL" != "true" ]]; then
+  docker compose --env-file "$APPS_ENV_FILE" -f compose.apps.yml pull
+else
+  echo "Skipping registry pulls for app project (SKIP_PULL=true)"
+fi
 docker compose --env-file "$APPS_ENV_FILE" -f compose.apps.yml up -d --remove-orphans
 
 wait_for_health easydev-communication-backend

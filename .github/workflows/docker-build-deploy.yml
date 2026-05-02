@@ -8,13 +8,13 @@ permissions:
   contents: read
 
 jobs:
-  build-push-deploy:
+  build-transfer-deploy:
     runs-on: ubuntu-latest
     environment: production
 
     env:
-      IMAGE_REPO: docker.io/${{ secrets.DOCKERHUB_NAMESPACE }}/easydev-gateway
-      NEW_IMAGE: docker.io/${{ secrets.DOCKERHUB_NAMESPACE }}/easydev-gateway:sha-${{ github.sha }}
+      NEW_IMAGE: easydev-gateway:sha-${{ github.sha }}
+      IMAGE_ARCHIVE: easydev-gateway-${{ github.sha }}.tar.gz
 
     steps:
       - name: Checkout
@@ -23,42 +23,46 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push image
+      - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE_REPO }}:latest
-            ${{ env.NEW_IMAGE }}
+          push: false
+          load: true
+          tags: ${{ env.NEW_IMAGE }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Archive Docker image
+        run: docker save "${NEW_IMAGE}" | gzip > "${IMAGE_ARCHIVE}"
+
+      - name: Copy image archive to Oracle VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: ${{ env.IMAGE_ARCHIVE }}
+          target: /tmp/
 
       - name: Deploy on Oracle VM
         uses: appleboy/ssh-action@v1.0.3
         env:
           NEW_IMAGE: ${{ env.NEW_IMAGE }}
-          DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          IMAGE_ARCHIVE: ${{ env.IMAGE_ARCHIVE }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: NEW_IMAGE,DOCKERHUB_NAMESPACE,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+          envs: NEW_IMAGE,IMAGE_ARCHIVE
           script: |
             set -euo pipefail
 
             DEPLOY_DIR="/home/opc/easydev-backends/deploy/oracle-vm"
             CORE_ENV="${DEPLOY_DIR}/.env.core"
             APPS_ENV="${DEPLOY_DIR}/.env.apps"
+            ARCHIVE_PATH="/tmp/${IMAGE_ARCHIVE}"
 
             ensure_key() {
               local file="$1"
@@ -92,18 +96,24 @@ jobs:
               fi
             }
 
-            ensure_key "$CORE_ENV" "IAM_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-iam-service:latest"
-            ensure_key "$CORE_ENV" "PAYMENT_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-payment-service:latest"
-            ensure_key "$APPS_ENV" "GATEWAY_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-gateway:latest"
-            ensure_key "$APPS_ENV" "COMMUNICATION_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-ai-communication-backend:latest"
+            if [[ ! -f "$ARCHIVE_PATH" ]]; then
+              echo "Missing image archive: $ARCHIVE_PATH"
+              exit 1
+            fi
+
+            docker load -i "$ARCHIVE_PATH" >/dev/null
+            rm -f "$ARCHIVE_PATH"
+
+            ensure_key "$CORE_ENV" "IAM_IMAGE" "easydev-iam-service:latest"
+            ensure_key "$CORE_ENV" "PAYMENT_IMAGE" "easydev-payment-service:latest"
+            ensure_key "$APPS_ENV" "GATEWAY_IMAGE" "easydev-gateway:latest"
+            ensure_key "$APPS_ENV" "COMMUNICATION_IMAGE" "easydev-ai-communication-backend:latest"
             ensure_key "$APPS_ENV" "IAM_PUBLIC_HOST" "iam-service.easydev.in"
             ensure_key "$APPS_ENV" "PAYMENT_PUBLIC_HOST" "payment.easydev.in"
             ensure_key "$APPS_ENV" "GATEWAY_PUBLIC_HOST" "gateway-server.easydev.in"
 
             set_with_backup "$APPS_ENV" "GATEWAY_IMAGE" "GATEWAY_IMAGE_BACKUP" "$NEW_IMAGE"
 
-            echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-
             cd "$DEPLOY_DIR"
             chmod +x deploy.sh check-health.sh
-            ./deploy.sh
+            SKIP_PULL=true ./deploy.sh

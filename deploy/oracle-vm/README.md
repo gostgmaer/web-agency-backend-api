@@ -1,6 +1,6 @@
 # Oracle VM Backend Deployment
 
-This deployment bundle runs a single-VM production topology with image-based deployment:
+This deployment bundle runs a single-VM production topology with direct image transfer deployment:
 
 - Core stack: IAM + Payment + shared Postgres/Redis
 - App stack: Gateway + AI Communication + app Postgres/Redis + Caddy edge proxy
@@ -29,22 +29,20 @@ The AI repository workflow updates only `communication-backend` and does not run
 
 Workflow behavior:
 
-1. Build and push Docker image to Docker Hub.
-2. Update image tag in Oracle VM env (`.env.core`/`.env.apps`).
-3. Run `deploy.sh` over SSH.
+1. Build Docker image in GitHub Actions.
+2. Save image as archive and copy it to Oracle VM over SSH.
+3. Load image locally on VM and update `.env.core` or `.env.apps` tag.
+4. Run `deploy.sh` over SSH.
 
 Deployment script behavior:
 
-- Pulls latest service images from registry.
+- Uses local VM images by default (`SKIP_PULL=true`).
 - Tags current running image as one rollback backup.
 - Deploys with `docker compose up -d --remove-orphans`.
 - Removes old images and keeps only active image + one backup image per service.
 
-## Required GitHub Secrets (IAM/Payment/Gateway Repos)
+## Required GitHub Secrets (IAM/Payment/Gateway/AI Repos)
 
-- `DOCKERHUB_NAMESPACE`
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
 - `DEPLOY_HOST`
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
