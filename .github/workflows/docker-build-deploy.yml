@@ -1,0 +1,109 @@
+name: Gateway Build And Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      IMAGE_REPO: docker.io/${{ secrets.DOCKERHUB_NAMESPACE }}/easydev-gateway
+      NEW_IMAGE: docker.io/${{ secrets.DOCKERHUB_NAMESPACE }}/easydev-gateway:sha-${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPO }}:latest
+            ${{ env.NEW_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy on Oracle VM
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          NEW_IMAGE: ${{ env.NEW_IMAGE }}
+          DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: NEW_IMAGE,DOCKERHUB_NAMESPACE,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+          script: |
+            set -euo pipefail
+
+            DEPLOY_DIR="/home/opc/easydev-backends/deploy/oracle-vm"
+            CORE_ENV="${DEPLOY_DIR}/.env.core"
+            APPS_ENV="${DEPLOY_DIR}/.env.apps"
+
+            ensure_key() {
+              local file="$1"
+              local key="$2"
+              local value="$3"
+              if ! grep -q "^${key}=" "$file"; then
+                printf '%s=%s\n' "$key" "$value" >> "$file"
+              fi
+            }
+
+            set_with_backup() {
+              local file="$1"
+              local key="$2"
+              local backup_key="$3"
+              local new_value="$4"
+              local old_value
+
+              old_value="$(grep "^${key}=" "$file" | tail -n 1 | cut -d= -f2- || true)"
+              if [[ -n "$old_value" && "$old_value" != "$new_value" ]]; then
+                if grep -q "^${backup_key}=" "$file"; then
+                  sed -i "s|^${backup_key}=.*|${backup_key}=${old_value}|" "$file"
+                else
+                  printf '%s=%s\n' "$backup_key" "$old_value" >> "$file"
+                fi
+              fi
+
+              if grep -q "^${key}=" "$file"; then
+                sed -i "s|^${key}=.*|${key}=${new_value}|" "$file"
+              else
+                printf '%s=%s\n' "$key" "$new_value" >> "$file"
+              fi
+            }
+
+            ensure_key "$CORE_ENV" "IAM_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-iam-service:latest"
+            ensure_key "$CORE_ENV" "PAYMENT_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-payment-service:latest"
+            ensure_key "$APPS_ENV" "GATEWAY_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-gateway:latest"
+            ensure_key "$APPS_ENV" "COMMUNICATION_IMAGE" "docker.io/${DOCKERHUB_NAMESPACE}/easydev-ai-communication-backend:latest"
+            ensure_key "$APPS_ENV" "IAM_PUBLIC_HOST" "iam-service.easydev.in"
+            ensure_key "$APPS_ENV" "PAYMENT_PUBLIC_HOST" "payment.easydev.in"
+            ensure_key "$APPS_ENV" "GATEWAY_PUBLIC_HOST" "gateway-server.easydev.in"
+
+            set_with_backup "$APPS_ENV" "GATEWAY_IMAGE" "GATEWAY_IMAGE_BACKUP" "$NEW_IMAGE"
+
+            echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+
+            cd "$DEPLOY_DIR"
+            chmod +x deploy.sh check-health.sh
+            ./deploy.sh

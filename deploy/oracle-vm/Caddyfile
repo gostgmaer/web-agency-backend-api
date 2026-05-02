@@ -1,0 +1,15 @@
+{
+  email admin@easydev.in
+}
+
+{$IAM_PUBLIC_HOST} {
+  reverse_proxy easydev-iam-platform:3100
+}
+
+{$PAYMENT_PUBLIC_HOST} {
+  reverse_proxy easydev-payment-service:3200
+}
+
+{$GATEWAY_PUBLIC_HOST} {
+  reverse_proxy easydev-web-agency-backend:3500
+}

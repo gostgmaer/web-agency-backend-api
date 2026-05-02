@@ -20,6 +20,10 @@ function resolveServiceOrigin(rawUrl, fallback = "") {
 
 const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL);
 const defaultIamServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL, "http://localhost:4002");
+const fileUploadServiceOrigin = resolveServiceOrigin(
+	process.env.FILE_UPLOAD_SERVICE_URL,
+	"https://file-upload-service-zjtv.onrender.com",
+);
 
 const isServerless = Boolean(
 	process.env.VERCEL ||
@@ -58,7 +62,12 @@ export const config = {
 	admin: { email: process.env.ADMIN_EMAIL },
 
 	// External microservice base URLs
-	fileUpload: { serviceUrl: process.env.FILE_UPLOAD_SERVICE_URL },
+	fileUpload: {
+		serviceUrl: process.env.FILE_UPLOAD_SERVICE_URL,
+		healthUrl:
+			process.env.FILE_UPLOAD_SERVICE_HEALTH_URL ||
+			(fileUploadServiceOrigin ? `${fileUploadServiceOrigin}/health` : ""),
+	},
 	auth: { serviceUrl: authServiceOrigin },
 
 	// ─── IAM Service ─────────────────────────────────────────────────────────
@@ -86,7 +95,7 @@ export const config = {
 
 	// ─── Notification Service ─────────────────────────────────────────────────
 	notification: {
-		healthUrl: process.env.NOTIFICATION_SERVICE_HEALTH_URL || 'https://notification-service-iota.vercel.app/v1/health/detailed',
+		healthUrl: process.env.NOTIFICATION_SERVICE_HEALTH_URL || 'https://notification-service-iota.vercel.app/v1/health',
 	},
 
 	// Tenant ID — used as a fallback x-tenant-id for all proxied requests.

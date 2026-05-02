@@ -1,0 +1,147 @@
+name: easydev-core
+
+services:
+  postgres-core:
+    image: postgres:16-alpine
+    container_name: easydev-postgres-core
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${CORE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${CORE_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${CORE_POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - core-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CORE_POSTGRES_USER} -d ${CORE_POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    mem_limit: 1g
+    cpus: "0.50"
+    networks:
+      - core-internal
+
+  redis-core:
+    image: redis:7-alpine
+    container_name: easydev-redis-core
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy noeviction
+    volumes:
+      - core-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    mem_limit: 512m
+    cpus: "0.25"
+    networks:
+      - core-internal
+
+  iam-platform:
+    image: ${IAM_IMAGE}
+    pull_policy: always
+    container_name: easydev-iam-platform
+    restart: unless-stopped
+    env_file:
+      - .env.core
+    environment:
+      PORT: 3100
+      NODE_ENV: production
+      API_PREFIX: api/v1/iam
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:5432/${CORE_POSTGRES_DB}?schema=iam
+      REDIS_HOST: redis-core
+      REDIS_PORT: 6379
+      ENABLE_REDIS: "true"
+      ENABLE_BULLMQ: "true"
+    ports:
+      - "3100:3100"
+    depends_on:
+      postgres-core:
+        condition: service_healthy
+      redis-core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3100/api/v1/iam/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    mem_limit: 1g
+    cpus: "0.50"
+    networks:
+      - core-internal
+      - easydev-services
+
+  payment-service:
+    image: ${PAYMENT_IMAGE}
+    pull_policy: always
+    container_name: easydev-payment-service
+    restart: unless-stopped
+    env_file:
+      - .env.core
+    environment:
+      PORT: 3200
+      NODE_ENV: production
+      API_PREFIX: api/v1
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:5432/${CORE_POSTGRES_DB}?schema=payment
+      REDIS_HOST: redis-core
+      REDIS_PORT: 6379
+      IAM_SERVICE_URL: http://iam-platform:3100
+    ports:
+      - "3200:3200"
+    depends_on:
+      postgres-core:
+        condition: service_healthy
+      redis-core:
+        condition: service_healthy
+      iam-platform:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3200/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    mem_limit: 1g
+    cpus: "0.50"
+    networks:
+      - core-internal
+      - easydev-services
+
+  payment-worker:
+    image: ${PAYMENT_IMAGE}
+    pull_policy: always
+    container_name: easydev-payment-worker
+    restart: unless-stopped
+    profiles: ["worker"]
+    env_file:
+      - .env.core
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:5432/${CORE_POSTGRES_DB}?schema=payment
+      REDIS_HOST: redis-core
+      REDIS_PORT: 6379
+      IAM_SERVICE_URL: http://iam-platform:3100
+    command: node dist/worker
+    depends_on:
+      postgres-core:
+        condition: service_healthy
+      redis-core:
+        condition: service_healthy
+      payment-service:
+        condition: service_started
+    mem_limit: 512m
+    cpus: "0.25"
+    networks:
+      - core-internal
+      - easydev-services
+
+volumes:
+  core-postgres-data:
+  core-redis-data:
+
+networks:
+  core-internal:
+    driver: bridge
+  easydev-services:
+    external: true
