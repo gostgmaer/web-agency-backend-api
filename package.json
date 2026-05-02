@@ -27,7 +27,7 @@
     "json2csv": "6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.3",
-    "multer": "^2.0.0",
+    "multer": "^2.1.1",
     "node-cron": "^3.0.3",
     "razorpay": "^2.9.6",
     "stripe": "^22.0.2",
@@ -36,5 +36,12 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash": "4.18.1",
+      "path-to-regexp": "0.1.13",
+      "picomatch": "2.3.2"
+    }
   }
 }
