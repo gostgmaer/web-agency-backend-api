@@ -1,44 +1,6 @@
 name: easydev-apps
 
 services:
-  postgres-comm:
-    image: postgres:16-alpine
-    container_name: easydev-postgres-comm
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${COMM_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${COMM_POSTGRES_PASSWORD}
-      POSTGRES_DB: ${COMM_POSTGRES_DB}
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - comm-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${COMM_POSTGRES_USER} -d ${COMM_POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 8
-    mem_limit: 1g
-    cpus: "0.50"
-    networks:
-      - apps-internal
-
-  redis-comm:
-    image: redis:7-alpine
-    container_name: easydev-redis-comm
-    restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy noeviction
-    volumes:
-      - comm-redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 8
-    mem_limit: 512m
-    cpus: "0.25"
-    networks:
-      - apps-internal
-
   communication-backend:
     image: ${COMMUNICATION_IMAGE}
     pull_policy: never
@@ -48,24 +10,20 @@ services:
       - .env.apps
     environment:
       NODE_ENV: production
-      PORT: 3001
-      DB_HOST: postgres-comm
-      DB_PORT: 5432
-      DB_USERNAME: ${COMM_POSTGRES_USER}
-      DB_PASSWORD: ${COMM_POSTGRES_PASSWORD}
-      DB_NAME: ${COMM_POSTGRES_DB}
+      PORT: 3303
+      DB_HOST: postgres-core
+      DB_PORT: 3304
+      DB_USERNAME: ${CORE_POSTGRES_USER}
+      DB_PASSWORD: ${CORE_POSTGRES_PASSWORD}
+      DB_NAME: ${CORE_POSTGRES_DB}
+      DB_SCHEMA: ${COMM_DB_SCHEMA:-communication}
       DB_SYNCHRONIZE: "true"
-      REDIS_HOST: redis-comm
-      REDIS_PORT: 6379
-      IAM_SERVICE_URL: http://iam-platform:3100
-      EASYDEV_API_URL: http://web-agency-backend:3500/api
-    depends_on:
-      postgres-comm:
-        condition: service_healthy
-      redis-comm:
-        condition: service_healthy
+      REDIS_HOST: redis-core
+      REDIS_PORT: 3305
+      IAM_SERVICE_URL: http://iam-platform:3301
+      EASYDEV_API_URL: http://web-agency-backend:3300/api
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/api/v1/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3303/api/v1/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -84,19 +42,19 @@ services:
       - .env.apps
     environment:
       NODE_ENV: production
-      PORT: 3500
-      AUTH_SERVICE_URL: http://iam-platform:3100
-      PAYMENT_SERVICE_URL: http://payment-service:3200
-      COMMUNICATION_URL: http://communication-backend:3001/api/v1
-      NOTIFICATION_SERVICE_HEALTH_URL: https://notification-service-iota.vercel.app/v1/health
-      FILE_UPLOAD_SERVICE_HEALTH_URL: https://file-upload-service-zjtv.onrender.com/health
+      PORT: 3300
+      AUTH_SERVICE_URL: http://iam-platform:3301
+      PAYMENT_SERVICE_URL: http://payment-service:3302
+      COMMUNICATION_URL: http://communication-backend:3303/api/v1
+      NOTIFICATION_SERVICE_HEALTH_URL: ${NOTIFICATION_SERVICE_HEALTH_URL:-https://notification.example.com/v1/health}
+      FILE_UPLOAD_SERVICE_HEALTH_URL: ${FILE_UPLOAD_SERVICE_HEALTH_URL:-https://files.example.com/health}
     ports:
-      - "3500:3500"
+      - "3300:3300"
     depends_on:
       communication-backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3500/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3300/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -111,9 +69,9 @@ services:
     container_name: easydev-edge-proxy
     restart: unless-stopped
     environment:
+      GATEWAY_PUBLIC_HOST: ${GATEWAY_PUBLIC_HOST}
       IAM_PUBLIC_HOST: ${IAM_PUBLIC_HOST}
       PAYMENT_PUBLIC_HOST: ${PAYMENT_PUBLIC_HOST}
-      GATEWAY_PUBLIC_HOST: ${GATEWAY_PUBLIC_HOST}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -135,8 +93,6 @@ services:
       - easydev-services
 
 volumes:
-  comm-postgres-data:
-  comm-redis-data:
   caddy-data:
   caddy-config:
 

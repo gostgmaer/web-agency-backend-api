@@ -3,16 +3,32 @@
 This deployment bundle runs a single-VM production topology with direct image transfer deployment:
 
 - Core stack: IAM + Payment + shared Postgres/Redis
-- App stack: Gateway + AI Communication + app Postgres/Redis + Caddy edge proxy
+- App stack: Gateway + AI Communication + Caddy edge proxy
 - External MongoDB remains hosted outside Oracle VM
 
-AI Communication backend is private (no public host port exposure) and is accessed through gateway flows.
+AI Communication backend is private (no public host port exposure), is accessed through gateway flows, and uses the shared core Postgres/Redis services.
+Its tables are isolated in a dedicated Postgres schema (`COMM_DB_SCHEMA`, default `communication`).
+
+If host Nginx already owns ports 80/443 on the VM, set `ENABLE_EDGE_PROXY=false` in `.env.apps` so deploys skip the Docker Caddy service.
+
+Service port policy (to avoid conflicts with other projects on the same VM):
+
+- 3300: web-agency gateway (public)
+- 3301: IAM (public via iam-service.easydev.in)
+- 3302: payment (public via payment.easydev.in)
+- 3303: AI communication (internal)
+- 3304: core postgres (internal)
+- 3305: core redis (internal)
+
+Core database runtime image: `postgres:17-alpine`.
 
 ## Public Domains
 
+- Gateway: `https://gateway-server.easydev.in`
 - IAM: `https://iam-service.easydev.in`
 - Payment: `https://payment.easydev.in`
-- Gateway: `https://gateway-server.easydev.in`
+
+AI Communication stays internal-only behind the gateway.
 
 ## On-Merge CI/CD Behavior
 
@@ -84,9 +100,9 @@ chmod +x deploy.sh check-health.sh
 
 Point the following A records to your Oracle VM public IP:
 
+- `gateway-server.easydev.in`
 - `iam-service.easydev.in`
 - `payment.easydev.in`
-- `gateway-server.easydev.in`
 
 Ports 80 and 443 must be open in Oracle security lists / firewall for certificate issuance and HTTPS routing.
 

@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 env:
-  NEW_IMAGE: easydev-gateway:sha-${{ github.sha }}
-  IMAGE_ARCHIVE: easydev-gateway-${{ github.sha }}.tar.gz
+  NEW_IMAGE: easydev-gateway:latest
+  IMAGE_ARCHIVE: easydev-gateway-latest.tar.gz
 
 jobs:
   code-quality:
@@ -234,7 +234,7 @@ jobs:
             set_with_backup "$APPS_ENV" "GATEWAY_IMAGE" "GATEWAY_IMAGE_BACKUP" "$NEW_IMAGE"
 
             cd "$DEPLOY_DIR"
-            docker compose --env-file .env.apps -f compose.apps.yml up -d --no-deps web-agency-backend
+            docker compose --env-file .env.core --env-file .env.apps -f compose.apps.yml up -d --no-deps web-agency-backend
             wait_for_health easydev-iam-platform
             wait_for_health easydev-payment-service
             wait_for_health easydev-communication-backend

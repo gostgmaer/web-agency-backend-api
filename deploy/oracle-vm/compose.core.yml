@@ -2,9 +2,10 @@ name: easydev-core
 
 services:
   postgres-core:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: easydev-postgres-core
     restart: unless-stopped
+    command: ["postgres", "-p", "3304"]
     environment:
       POSTGRES_USER: ${CORE_POSTGRES_USER}
       POSTGRES_PASSWORD: ${CORE_POSTGRES_PASSWORD}
@@ -13,7 +14,7 @@ services:
     volumes:
       - core-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${CORE_POSTGRES_USER} -d ${CORE_POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 3304 -U ${CORE_POSTGRES_USER} -d ${CORE_POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 8
@@ -21,16 +22,17 @@ services:
     cpus: "0.50"
     networks:
       - core-internal
+      - easydev-services
 
   redis-core:
     image: redis:7-alpine
     container_name: easydev-redis-core
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy noeviction
+    command: redis-server --port 3305 --appendonly yes --maxmemory 384mb --maxmemory-policy noeviction
     volumes:
       - core-redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-p", "3305", "ping"]
       interval: 10s
       timeout: 5s
       retries: 8
@@ -38,6 +40,7 @@ services:
     cpus: "0.25"
     networks:
       - core-internal
+      - easydev-services
 
   iam-platform:
     image: ${IAM_IMAGE}
@@ -47,23 +50,23 @@ services:
     env_file:
       - .env.core
     environment:
-      PORT: 3100
+      PORT: 3301
       NODE_ENV: production
       API_PREFIX: api/v1/iam
-      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:5432/${CORE_POSTGRES_DB}?schema=iam
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:3304/${CORE_POSTGRES_DB}?schema=iam
       REDIS_HOST: redis-core
-      REDIS_PORT: 6379
+      REDIS_PORT: 3305
       ENABLE_REDIS: "true"
       ENABLE_BULLMQ: "true"
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3301:3301"
     depends_on:
       postgres-core:
         condition: service_healthy
       redis-core:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3100/api/v1/iam/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3301/api/v1/iam/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -81,15 +84,15 @@ services:
     env_file:
       - .env.core
     environment:
-      PORT: 3200
+      PORT: 3302
       NODE_ENV: production
       API_PREFIX: api/v1
-      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:5432/${CORE_POSTGRES_DB}?schema=payment
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:3304/${CORE_POSTGRES_DB}?schema=payment
       REDIS_HOST: redis-core
-      REDIS_PORT: 6379
-      IAM_SERVICE_URL: http://iam-platform:3100
+      REDIS_PORT: 3305
+      IAM_SERVICE_URL: http://iam-platform:3301
     ports:
-      - "3200:3200"
+      - "127.0.0.1:3302:3302"
     depends_on:
       postgres-core:
         condition: service_healthy
@@ -98,7 +101,7 @@ services:
       iam-platform:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3200/api/v1/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3302/api/v1/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -118,10 +121,10 @@ services:
       - .env.core
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:5432/${CORE_POSTGRES_DB}?schema=payment
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:3304/${CORE_POSTGRES_DB}?schema=payment
       REDIS_HOST: redis-core
-      REDIS_PORT: 6379
-      IAM_SERVICE_URL: http://iam-platform:3100
+      REDIS_PORT: 3305
+      IAM_SERVICE_URL: http://iam-platform:3301
     command: node dist/worker
     depends_on:
       postgres-core:

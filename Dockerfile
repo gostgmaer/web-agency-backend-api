@@ -26,7 +26,7 @@ COPY . .
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
   rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
-EXPOSE 3500
+EXPOSE 3300
 
 CMD ["node", "server.js"]
 
