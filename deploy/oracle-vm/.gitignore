@@ -1,2 +1,5 @@
 .env.core
 .env.apps
+*.local.md
+ENV_UPDATE_RUNBOOK.md
+*.bak.*
