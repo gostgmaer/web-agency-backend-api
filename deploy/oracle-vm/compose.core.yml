@@ -91,6 +91,9 @@ services:
       REDIS_HOST: redis-core
       REDIS_PORT: 3305
       IAM_SERVICE_URL: http://iam-platform:3301
+      JWT_ISSUER: ${JWT_ISSUER:-user-auth-service}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-dashboard-app}
+    command: ["sh", "-c", "./node_modules/.bin/prisma db push --skip-generate && node dist/main"]
     ports:
       - "127.0.0.1:3302:3302"
     depends_on:

@@ -11,6 +11,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3303
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:3304/${CORE_POSTGRES_DB}?schema=${COMM_DB_SCHEMA:-communication}
       DB_HOST: postgres-core
       DB_PORT: 3304
       DB_USERNAME: ${CORE_POSTGRES_USER}
@@ -46,8 +47,8 @@ services:
       AUTH_SERVICE_URL: http://iam-platform:3301
       PAYMENT_SERVICE_URL: http://payment-service:3302
       COMMUNICATION_URL: http://communication-backend:3303/api/v1
-      NOTIFICATION_SERVICE_HEALTH_URL: ${NOTIFICATION_SERVICE_HEALTH_URL:-https://notification.example.com/v1/health}
-      FILE_UPLOAD_SERVICE_HEALTH_URL: ${FILE_UPLOAD_SERVICE_HEALTH_URL:-https://files.example.com/health}
+      NOTIFICATION_SERVICE_HEALTH_URL: ${NOTIFICATION_SERVICE_HEALTH_URL:-https://notification-service-iota.vercel.app/v1/health}
+      FILE_UPLOAD_SERVICE_HEALTH_URL: ${FILE_UPLOAD_SERVICE_HEALTH_URL:-https://file-upload-service-zjtv.onrender.com/health}
     ports:
       - "3300:3300"
     depends_on:
