@@ -1284,6 +1284,35 @@ router.get('/methods', async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/payments/subscriptions/plans
+ *
+ * Proxies plan catalog reads to payment-microservice so clients can discover
+ * available plans through the gateway contract.
+ */
+router.get('/subscriptions/plans', async (req, res, next) => {
+  try {
+    if (!config.payment?.serviceUrl) {
+      throw new AppError('Payment service is not configured.', 503);
+    }
+
+    const qs = new URLSearchParams(req.query).toString();
+    const result = await apiCall(
+      `${pmUrl()}/api/v1/subscriptions/plans${qs ? `?${qs}` : ''}`,
+      { method: 'GET' },
+    );
+
+    if (result.error) {
+      logger.error('payment plan catalog failed', { status: result.status });
+      throw new AppError(result.data?.message || 'Failed to fetch subscription plans.', result.status || 502);
+    }
+
+    return res.status(200).json(result.data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMIN — authenticated staff only
 // ─────────────────────────────────────────────────────────────────────────────

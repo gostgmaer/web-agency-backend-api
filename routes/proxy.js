@@ -112,8 +112,12 @@ function buildCustomerChannelPayload(body) {
 if (config.auth.serviceUrl) {
   // IAM global prefix is api/v1/iam — rewrite paths accordingly
   router.use('/auth',               buildProxy(config.auth.serviceUrl, '/api/v1/iam/auth',          'User Auth Service'));
+  router.use('/profile',            buildProxy(config.auth.serviceUrl, '/api/v1/iam/profile',       'User Auth Service'));
   router.use('/rbac',               buildProxy(config.auth.serviceUrl, '/api/v1/iam/rbac',          'User Auth Service'));
   router.use('/users',              buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
+  // Customer dashboard team management proxies to IAM user APIs.
+  // This intentionally sits on /customer/users for backward compatibility.
+  router.use('/customer/users',     buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
   router.use('/tenants',            buildProxy(config.auth.serviceUrl, '/api/v1/iam/tenants',       'User Auth Service'));
   router.use('/sessions',           buildProxy(config.auth.serviceUrl, '/api/v1/iam/sessions',      'User Auth Service'));
   router.use('/iam/health',         buildProxy(config.auth.serviceUrl, '/api/v1/iam/health',        'User Auth Service'));
@@ -128,7 +132,7 @@ if (config.auth.serviceUrl) {
   // Legacy /admin path kept for backward-compatibility but no longer used — remove once all clients updated
   router.use('/admin',              buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
 } else {
-  for (const path of ['/auth', '/rbac', '/users', '/tenants', '/sessions',
+  for (const path of ['/auth', '/profile', '/rbac', '/users', '/customer/users', '/tenants', '/sessions',
                        '/iam/health', '/iam/logs', '/iam/stats', '/iam/security', '/iam/api-keys',
                        '/iam/webhooks', '/iam/flags', '/iam/apps', '/iam/settings', '/admin']) {
     router.use(path, serviceUnavailable('User Auth Service'));
@@ -151,7 +155,7 @@ if (config.fileUpload.serviceUrl) {
 // All post-login customer dashboard calls are proxied here.
 // Path rewriting:  /customer/business  →  AI Comm /api/v1/business
 //                  /customer/channels  →  AI Comm /api/v1/channels
-//                  /customer/users     →  AI Comm /api/v1/users
+//                  /customer/users     →  IAM /api/v1/iam/users (handled above)
 //                  /customer/conversations/stats  →  AI Comm /api/v1/conversations/stats
 //                  /customer/messages/stats       →  AI Comm /api/v1/messages/stats
 //
