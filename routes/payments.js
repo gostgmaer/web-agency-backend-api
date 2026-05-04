@@ -128,9 +128,11 @@ const pmUrl = () => {
 
 /** Service-to-service headers for payment-microservice (API key auth). */
 function pmServiceHeaders(tenantId, userId, userEmail) {
+	const effectiveTenant = tenantId || config.tenantSlug || config.tenantId || 'easydev';
   const headers = {
     'x-api-key':    config.payment?.apiKey || '',
-    'x-tenant-id':  tenantId || config.tenantId || 'easydev',
+    'x-tenant-id':  effectiveTenant,
+		'x-tenant-slug': effectiveTenant,
     'Content-Type': 'application/json',
   };
   if (userId) headers['x-user-id'] = userId;
@@ -140,9 +142,11 @@ function pmServiceHeaders(tenantId, userId, userEmail) {
 
 /** User JWT passthrough headers for admin calls to payment-microservice. */
 function pmAuthHeaders(bearerToken, tenantId) {
+	const effectiveTenant = tenantId || config.tenantSlug || config.tenantId || 'easydev';
   return {
     'Authorization': bearerToken || '',
-    'x-tenant-id':   tenantId || config.tenantId || 'easydev',
+    'x-tenant-id':   effectiveTenant,
+		'x-tenant-slug': effectiveTenant,
     'Content-Type':  'application/json',
   };
 }

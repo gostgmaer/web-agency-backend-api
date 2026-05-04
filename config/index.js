@@ -23,6 +23,14 @@ function resolveServiceOrigin(rawUrl, fallback = "") {
 	}
 }
 
+function getRequiredEnv(name) {
+	const value = process.env[name];
+	if (!value || !String(value).trim()) {
+		throw new Error(`${name} environment variable is required`);
+	}
+	return String(value).trim();
+}
+
 const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL);
 const fileUploadServiceOrigin = resolveServiceOrigin(
 	process.env.FILE_UPLOAD_SERVICE_URL,
@@ -59,8 +67,8 @@ export const config = {
 	jwt: {
 		// Must match JWT_ACCESS_SECRET in the user-auth-service
 		accessSecret: process.env.JWT_ACCESS_SECRET,
-		issuer: process.env.JWT_ISSUER || 'user-auth-service',
-		audience: process.env.JWT_AUDIENCE || 'dashboard-app',
+		issuer: getRequiredEnv('JWT_ISSUER'),
+		audience: getRequiredEnv('JWT_AUDIENCE'),
 	},
 
 	email: {
@@ -115,6 +123,12 @@ export const config = {
 	// Required for single-tenant deployments; in multi-tenant mode, each
 	// client passes its own x-tenant-id header and this is not used.
 	tenantId: process.env.TENANT_ID || null,
+	tenantSlug:
+		process.env.TENANT_SLUG ||
+		process.env.IAM_TENANT_SLUG ||
+		process.env.COMMUNICATION_IAM_TENANT_SLUG ||
+		process.env.TENANT_ID ||
+		null,
 
 	// ─── Payment Gateways ────────────────────────────────────────────────────
 	// Only the Razorpay public key is needed here — returned to the frontend

@@ -19,6 +19,7 @@ import { provision } from '../utils/productProvisioner.js';
 import { resolveApplicationId, resolveTenantId } from '../utils/iamProvisioner.js';
 import { AppError }  from '../utils/errors.js';
 import { config }    from '../config/index.js';
+import { authenticate } from '../middleware/auth.js';
 import logger        from '../utils/logger.js';
 
 const router = express.Router();
@@ -72,7 +73,7 @@ function getBearerAuthorization(req) {
  *   If you need stronger protection here, add the `authenticate` middleware
  *   from middleware/auth.js and require a Bearer token from the admin dashboard.
  */
-router.post('/provision', async (req, res, next) => {
+router.post('/provision', authenticate, async (req, res, next) => {
   try {
     const { name, email, planKey, paymentId, businessName, externalId } = req.body;
     const requestedPlanKey = typeof planKey === 'string' ? planKey.toLowerCase().trim() : '';
@@ -92,11 +93,26 @@ router.post('/provision', async (req, res, next) => {
       throw new AppError('Unsupported planKey. Use starter, growth, or payg.', 400);
     }
 
-    logger.info('Manual provision request', { email, planKey: normalizedPlanKey, paymentId });
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedActorEmail = String(req.user?.email || '').toLowerCase().trim();
+    const actorRole = String(req.user?.role || '').toLowerCase();
+    const isPrivilegedActor = ['admin', 'super_admin', 'tenant_admin', 'support', 'finance'].includes(actorRole);
+
+    if (!isPrivilegedActor && normalizedActorEmail !== normalizedEmail) {
+      throw new AppError('You can only provision the currently authenticated account.', 403);
+    }
+
+    logger.info('Manual provision request', {
+      actorId: req.user?.id,
+      actorRole,
+      email: normalizedEmail,
+      planKey: normalizedPlanKey,
+      paymentId,
+    });
 
     const result = await provision('easydev-communication', {
       name:         name.trim(),
-      email:        email.toLowerCase().trim(),
+      email:        normalizedEmail,
       planKey:      normalizedPlanKey,
       paymentId,
       businessName: businessName?.trim() || name.trim(),

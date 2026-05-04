@@ -256,8 +256,16 @@ app.get("/api/postman-collection", (_req, res) => {
 // x-tenant-id even when the client omits it (single-tenant / non-tenanted mode).
 if (config.tenantId) {
   app.use((req, _res, next) => {
+    if (req.headers['x-tenant-slug'] && !req.headers['x-tenant-id']) {
+      req.headers['x-tenant-id'] = req.headers['x-tenant-slug'];
+    }
+
     if (!req.headers['x-tenant-id']) {
       req.headers['x-tenant-id'] = config.tenantId;
+    }
+
+    if (!req.headers['x-tenant-slug'] && config.tenantSlug) {
+      req.headers['x-tenant-slug'] = config.tenantSlug;
     }
     next();
   });
