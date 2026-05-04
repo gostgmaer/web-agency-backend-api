@@ -1,10 +1,15 @@
 import { config } from "../config/index.js";
 import logger from "./logger.js";
 import axios from "axios";
-import dotenv from "dotenv";
-dotenv.config();
 const EMAIL_SERVICE_URL = `${config.email.serviceUrl}/v1/email/send`;
-const EMAIL_API_KEY = process.env.EMAIL_SERVICE_API_KEY || '';
+const EMAIL_API_KEY = config.emailApiKey || '';
+
+const getSupportEmail = () => {
+	if (!config.admin.email) {
+		throw new Error('ADMIN_EMAIL must be configured for email templates');
+	}
+	return config.admin.email;
+};
 
 /**
  * Extracts the pathname + search from a full URL, or returns the string as-is
@@ -21,7 +26,7 @@ const extractPath = (urlOrPath) => {
 	}
 };
 
-const APP_NAME = process.env.APP_NAME || 'EasyDev';
+const APP_NAME = config.app.name || 'EasyDev';
 
 export const sendEmail = async (options) => {
   try {
@@ -45,7 +50,7 @@ export const sendEmail = async (options) => {
 			"x-tenant-id": tenantId,
 			"x-app": APP_NAME,
 			"x-app-name": APP_NAME,
-			"x-app-url": config.app.frontendUrl || "http://localhost:3000",
+			"x-app-url": config.app.frontendUrl,
 			"x-path": path || "/dashboard",
 			"x-idempotency-key": resolvedIdempotencyKey,
 		};
@@ -75,7 +80,7 @@ export const sendEmail = async (options) => {
  */
 export const sendNewsletterSubscriptionConfirmation = async (subscriber) => {
 	try {
-		const confirmationUrl = `${config.app.frontendUrl || "http://localhost:3000"}/newsletter/confirm?token=${subscriber.confirmationToken}`;
+		const confirmationUrl = `${config.app.frontendUrl}/newsletter/confirm?token=${subscriber.confirmationToken}`;
 		await sendEmail({
 			to: subscriber.email,
 			templateId: "NEWSLETTER_SUBSCRIBE_CONFIRMATION",
@@ -99,7 +104,7 @@ export const sendNewsletterSubscriptionConfirmation = async (subscriber) => {
  */
 export const sendNewsletterWelcomeConfirmed = async (subscriber) => {
 	try {
-		const unsubscribeUrl = `${config.app.frontendUrl || "http://localhost:3000"}/newsletter/unsubscribe?email=${encodeURIComponent(subscriber.email)}`;
+		const unsubscribeUrl = `${config.app.frontendUrl}/newsletter/unsubscribe?email=${encodeURIComponent(subscriber.email)}`;
 		await sendEmail({
 			to: subscriber.email,
 			templateId: "NEWSLETTER_WELCOME",
@@ -123,7 +128,7 @@ export const sendNewsletterWelcomeConfirmed = async (subscriber) => {
  */
 export const sendNewsletterResubscribeWelcome = async (subscriber) => {
 	try {
-		const unsubscribeUrl = `${config.app.frontendUrl || "http://localhost:3000"}/newsletter/unsubscribe?email=${encodeURIComponent(subscriber.email)}`;
+		const unsubscribeUrl = `${config.app.frontendUrl}/newsletter/unsubscribe?email=${encodeURIComponent(subscriber.email)}`;
 		await sendEmail({
 			to: subscriber.email,
 			templateId: "NEWSLETTER_RESUBSCRIBE",
@@ -183,7 +188,7 @@ export const sendAiCommunicationWelcome = async ({ name, email, loginUrl, tempor
 				planName: planName || 'Pro',
 				companyName: 'EasyDev',
 				appName: 'EasyDev Communication AI',
-				supportEmail: config.admin.email || 'support@easydev.in',
+				supportEmail: getSupportEmail(),
 			},
 		});
 		logger.info('AI Communication welcome email sent', { email });
@@ -211,7 +216,7 @@ export const sendAdminCreatedUser = async ({ username, email, temporaryPassword,
 				temporaryPassword,
 				loginUrl,
 				companyName: 'EasyDev',
-				supportEmail: config.admin.email || 'support@easydev.in',
+				supportEmail: getSupportEmail(),
 			},
 		});
 		logger.info('Admin created user email sent', { email });
@@ -264,7 +269,7 @@ export const sendProductAccessGranted = async ({
 				// accessEndDate: accessEndDate instanceof Date ? accessEndDate.toISOString() : accessEndDate,
 				features: features || [],
 				companyName: 'EasyDev',
-				supportEmail: config.admin.email || 'support@easydev.in',
+				supportEmail: getSupportEmail(),
 			},
 		});
 		logger.info('Product access granted email sent', { email, productName });

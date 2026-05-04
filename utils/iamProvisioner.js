@@ -10,7 +10,10 @@ const resolvedApplicationIds = new Map();
 const resolvedRoleIds = new Map();
 
 function iamBaseUrl() {
-  return `${config.iam?.serviceUrl || 'http://localhost:4002'}/api/v1/iam`;
+  if (!config.iam?.serviceUrl) {
+    throw new Error("AUTH_SERVICE_URL is not configured");
+  }
+  return `${config.iam.serviceUrl}/api/v1/iam`;
 }
 
 function unwrapPayload(body) {

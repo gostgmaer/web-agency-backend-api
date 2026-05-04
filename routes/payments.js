@@ -119,7 +119,12 @@ function getPending(key) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const pmUrl = () => config.payment?.serviceUrl || 'http://localhost:3000';
+const pmUrl = () => {
+  if (!config.payment?.serviceUrl) {
+    throw new Error("PAYMENT_SERVICE_URL is not configured");
+  }
+  return config.payment.serviceUrl;
+};
 
 /** Service-to-service headers for payment-microservice (API key auth). */
 function pmServiceHeaders(tenantId, userId, userEmail) {

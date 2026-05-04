@@ -3,8 +3,13 @@ import dotenv from "dotenv";
 dotenv.config();
 
 function resolveServiceOrigin(rawUrl, fallback = "") {
+	if (!rawUrl && !fallback) {
+		throw new Error("Service URL is required (no fallback allowed)");
+	}
 	const candidate = String(rawUrl || fallback || "").trim();
-	if (!candidate) return "";
+	if (!candidate) {
+		throw new Error("Service URL cannot be empty");
+	}
 
 	const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)
 		? candidate
@@ -14,12 +19,11 @@ function resolveServiceOrigin(rawUrl, fallback = "") {
 		const parsed = new URL(withScheme);
 		return `${parsed.protocol}//${parsed.host}`;
 	} catch {
-		return "";
+		throw new Error(`Invalid service URL format: ${candidate}`);
 	}
 }
 
 const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL);
-const defaultIamServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL, "http://localhost:4002");
 const fileUploadServiceOrigin = resolveServiceOrigin(
 	process.env.FILE_UPLOAD_SERVICE_URL,
 	"https://file-upload-service-zjtv.onrender.com",
@@ -36,9 +40,16 @@ const isServerless = Boolean(
 export const config = {
 	app: {
 		nodeEnv: process.env.NODE_ENV || "development",
-		port: process.env.PORT || 3500,
-		frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
-		corsOrigins: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : ["http://localhost:3000"],
+		name: process.env.APP_NAME || "EasyDev",
+		port: process.env.PORT ? parseInt(process.env.PORT, 10) : (() => {
+			throw new Error("PORT environment variable is required and must be a valid number");
+		})(),
+		frontendUrl: process.env.FRONTEND_URL || (() => {
+			throw new Error("FRONTEND_URL environment variable is required");
+		})(),
+		corsOrigins: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : (() => {
+			throw new Error("CORS_ORIGINS environment variable is required");
+		})(),
 		version: process.env.NPM_PACKAGE_VERSION || "1.0.0",
 		isServerless,
 	},
@@ -75,17 +86,19 @@ export const config = {
 	// iam.serviceUrl is used for SSO token generation calls.
 	// No per-product APP_ID env vars — the key in config.products IS the IAM slug.
 	iam: {
-		serviceUrl: defaultIamServiceOrigin,
+		serviceUrl: authServiceOrigin,
 		adminEmail: process.env.IAM_ADMIN_EMAIL || '',
 		adminPassword: process.env.IAM_ADMIN_PASSWORD || '',
 		adminJwt: process.env.IAM_ADMIN_JWT || '',
 	},
 
 	// ─── AI Communication Service ─────────────────────────────────────────────
-	// Full versioned API URL, e.g. http://localhost:4001/api/v1
+	// Full versioned API URL, e.g. http://localhost:3303/api/v1
 	// Parsed here so nothing downstream needs to know the version prefix.
 	communication: (() => {
-		const raw = process.env.COMMUNICATION_URL || 'http://localhost:4001/api/v1';
+		const raw = process.env.COMMUNICATION_URL || (() => {
+			throw new Error("COMMUNICATION_URL environment variable is required");
+		})();
 		const parsed = new URL(raw);
 		return {
 			proxyTarget: `${parsed.protocol}//${parsed.host}`,     // host only  — proxy target
@@ -114,7 +127,9 @@ export const config = {
 	// Central payment processing service. web-agency-backend-api delegates all
 	// checkout and webhook operations here via service-to-service API key auth.
 	payment: {
-		serviceUrl: process.env.PAYMENT_SERVICE_URL || 'http://localhost:3000',
+		serviceUrl: process.env.PAYMENT_SERVICE_URL || (() => {
+			throw new Error("PAYMENT_SERVICE_URL environment variable is required");
+		})(),
 		// API key sent as x-api-key header. Must match API_KEY_HASH on the
 		// payment-microservice side (SHA-256 hash of this plaintext key).
 		apiKey: process.env.PAYMENT_SERVICE_API_KEY || '',
@@ -145,7 +160,9 @@ export const config = {
 			name:          'EasyDev Communication AI',
 			description:   'AI-powered WhatsApp & email automation platform',
 			provisionType: 'easydev-communication',
-			provisionUrl:  process.env.COMMUNICATION_URL || 'http://localhost:4001/api/v1',
+			provisionUrl:  process.env.COMMUNICATION_URL || (() => {
+				throw new Error("COMMUNICATION_URL environment variable is required");
+			})(),
 			apiKey:        process.env.COMMUNICATION_API_KEY,
 			features: [
 				'AI-powered auto-replies',
@@ -202,10 +219,16 @@ export const config = {
 		shutdownTimeout: Number(process.env.SHUTDOWN_TIMEOUT) || 10000,
 	},
 
+	features: {
+		enableKafka: process.env.ENABLE_KAFKA === "true",
+	},
+
 	docs: { enableSwagger: process.env.ENABLE_SWAGGER === "true" },
 
 	// ─── Dashboard URL (used in lead email links) ─────────────────────────────
-	dashboard: { url: process.env.DASHBOARD_URL || 'http://localhost:3000' },
+	dashboard: { url: process.env.DASHBOARD_URL || (() => {
+		throw new Error("DASHBOARD_URL environment variable is required");
+	})() },
 
 	// ─── Lead Email API Key (sent to email microservice) ─────────────────────
 	emailApiKey: process.env.EMAIL_SERVICE_API_KEY || '',
@@ -219,6 +242,8 @@ export const config = {
 	// ─── Redis (optional — lead rate-limiter and scheduler lock) ─────────────
 	redis: {
 		enabled: process.env.REDIS_ENABLED === 'true',
-		url: process.env.REDIS_URL || 'redis://localhost:6379',
+		url: process.env.REDIS_URL || (() => {
+			throw new Error("REDIS_URL environment variable is required");
+		})(),
 	},
 };

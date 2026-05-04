@@ -83,7 +83,7 @@ async function getGatewayServiceHealth() {
   const checks = {
     database: mongoose.connection.readyState === 1 ? "ok" : "error",
     redis: config.redis?.enabled ? "unknown" : "disabled",
-    kafka: process.env.ENABLE_KAFKA === "true" ? "unknown" : "disabled",
+    kafka: config.features?.enableKafka ? "unknown" : "disabled",
   };
 
   if (config.redis?.enabled && config.redis?.url) {

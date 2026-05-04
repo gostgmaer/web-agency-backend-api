@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
+import { JWT_SECRET, JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -25,6 +25,7 @@ export const authenticate = (req, res, next) => {
     const decoded = jwt.verify(token, JWT_SECRET, {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
+      algorithms: [JWT_ALGORITHM],
     });
 
     // Map user-auth-service JWT claims to a consistent shape.
