@@ -279,6 +279,7 @@ jobs:
             set -euo pipefail
 
             DEPLOY_DIR="/home/opc/easydev-backends/deploy/oracle-vm"
+            CORE_ENV="${DEPLOY_DIR}/.env.core"
             APPS_ENV="${DEPLOY_DIR}/.env.apps"
             ARCHIVE_PATH="/tmp/${IMAGE_ARCHIVE}"
             BUILD_REQUIRED="${BUILD_REQUIRED:-true}"
@@ -334,6 +335,43 @@ jobs:
               return 1
             }
 
+            verify_core_gateway_contract() {
+              if ! docker compose --env-file "$CORE_ENV" -f compose.core.yml config --services | grep -qx 'web-agency-backend'; then
+                echo "compose.core.yml does not declare web-agency-backend. Gateway must be owned by easydev-core."
+                return 1
+              fi
+              return 0
+            }
+
+            migrate_legacy_gateway_stack_owner() {
+              local gateway_container="easydev-web-agency-backend"
+
+              if ! docker inspect "$gateway_container" >/dev/null 2>&1; then
+                return 0
+              fi
+
+              local compose_project
+              compose_project="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$gateway_container" 2>/dev/null || true)"
+
+              if [[ "$compose_project" != "easydev-apps" ]]; then
+                return 0
+              fi
+
+              echo "Migrating gateway container ownership from easydev-apps to easydev-core"
+              docker compose --env-file "$CORE_ENV" --env-file "$APPS_ENV" -f compose.apps.yml rm -fsv web-agency-backend >/dev/null 2>&1 || true
+              docker rm -f "$gateway_container" >/dev/null 2>&1 || true
+            }
+
+            if [[ ! -f "$CORE_ENV" ]]; then
+              echo "Missing core env file: $CORE_ENV"
+              exit 1
+            fi
+
+            if [[ ! -f "$APPS_ENV" ]]; then
+              echo "Missing apps env file: $APPS_ENV"
+              exit 1
+            fi
+
             if [[ "$BUILD_REQUIRED" == "true" ]]; then
               if [[ ! -f "$ARCHIVE_PATH" ]]; then
                 echo "Missing image archive: $ARCHIVE_PATH"
@@ -346,13 +384,15 @@ jobs:
               echo "No build-required changes detected; deploying using existing image reference."
             fi
 
-            ensure_key "$APPS_ENV" "GATEWAY_IMAGE" "easydev-gateway:latest"
-            ensure_key "$APPS_ENV" "GATEWAY_IMAGE_BACKUP" ""
+            ensure_key "$CORE_ENV" "GATEWAY_IMAGE" "easydev-gateway:latest"
+            ensure_key "$CORE_ENV" "GATEWAY_IMAGE_BACKUP" ""
 
-            set_with_backup "$APPS_ENV" "GATEWAY_IMAGE" "GATEWAY_IMAGE_BACKUP" "$NEW_IMAGE"
+            set_with_backup "$CORE_ENV" "GATEWAY_IMAGE" "GATEWAY_IMAGE_BACKUP" "$NEW_IMAGE"
 
             cd "$DEPLOY_DIR"
-            docker compose --env-file .env.core --env-file .env.apps -f compose.apps.yml up -d --no-deps web-agency-backend
+            verify_core_gateway_contract
+            migrate_legacy_gateway_stack_owner
+            docker compose --env-file .env.core -f compose.core.yml up -d --no-deps web-agency-backend
             wait_for_health easydev-iam-platform
             wait_for_health easydev-payment-service
             if ! wait_for_health easydev-communication-backend 12 5; then
@@ -416,9 +456,9 @@ jobs:
             set -euo pipefail
 
             DEPLOY_DIR="/home/opc/easydev-backends/deploy/oracle-vm"
-            APPS_ENV="${DEPLOY_DIR}/.env.apps"
+            CORE_ENV="${DEPLOY_DIR}/.env.core"
             CONTAINER="easydev-web-agency-backend"
-            BACKUP_REF="$(grep '^GATEWAY_IMAGE_BACKUP=' "$APPS_ENV" | tail -n 1 | cut -d= -f2- || true)"
+            BACKUP_REF="$(grep '^GATEWAY_IMAGE_BACKUP=' "$CORE_ENV" | tail -n 1 | cut -d= -f2- || true)"
 
             cleanup_repo_keep_current_and_backup() {
               local container_name="$1"

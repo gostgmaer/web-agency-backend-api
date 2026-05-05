@@ -2,9 +2,13 @@
 
 This deployment bundle runs a single-VM production topology with direct image transfer deployment:
 
-- Core stack: IAM + Payment + shared Postgres/Redis
-- App stack: Gateway + AI Communication + Caddy edge proxy
+- Core stack: Gateway + IAM + Payment + shared Postgres/Redis
+- App stack: AI Communication + Caddy edge proxy
 - External MongoDB remains hosted outside Oracle VM
+
+Migration note:
+
+- If an older deployment still has `easydev-web-agency-backend` attached to the `easydev-apps` project, `deploy.sh` now auto-migrates ownership to `easydev-core` before reconciliation to avoid Docker container-name conflicts.
 
 AI Communication backend is private (no public host port exposure), is accessed through gateway flows, and uses the shared core Postgres/Redis services.
 Its tables are isolated in a dedicated Postgres schema (`COMM_DB_SCHEMA`, default `communication`).

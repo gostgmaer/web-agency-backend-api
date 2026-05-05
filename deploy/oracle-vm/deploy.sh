@@ -30,9 +30,23 @@ require_env_key() {
   fi
 }
 
+# Backward compatibility: older deployments stored gateway image tags in .env.apps.
+if ! grep -q '^GATEWAY_IMAGE=' "$CORE_ENV_FILE"; then
+  legacy_gateway_image="$(grep '^GATEWAY_IMAGE=' "$APPS_ENV_FILE" | tail -n 1 || true)"
+  if [[ -n "$legacy_gateway_image" ]]; then
+    echo "$legacy_gateway_image" >> "$CORE_ENV_FILE"
+  fi
+fi
+if ! grep -q '^GATEWAY_IMAGE_BACKUP=' "$CORE_ENV_FILE"; then
+  legacy_gateway_image_backup="$(grep '^GATEWAY_IMAGE_BACKUP=' "$APPS_ENV_FILE" | tail -n 1 || true)"
+  if [[ -n "$legacy_gateway_image_backup" ]]; then
+    echo "$legacy_gateway_image_backup" >> "$CORE_ENV_FILE"
+  fi
+fi
+
 require_env_key "$CORE_ENV_FILE" "IAM_IMAGE"
 require_env_key "$CORE_ENV_FILE" "PAYMENT_IMAGE"
-require_env_key "$APPS_ENV_FILE" "GATEWAY_IMAGE"
+require_env_key "$CORE_ENV_FILE" "GATEWAY_IMAGE"
 require_env_key "$APPS_ENV_FILE" "COMMUNICATION_IMAGE"
 require_env_key "$APPS_ENV_FILE" "GATEWAY_PUBLIC_HOST"
 require_env_key "$APPS_ENV_FILE" "IAM_PUBLIC_HOST"
@@ -41,11 +55,11 @@ require_env_key "$APPS_ENV_FILE" "PAYMENT_PUBLIC_HOST"
 GATEWAY_PUBLIC_HOST="$(grep '^GATEWAY_PUBLIC_HOST=' "$APPS_ENV_FILE" | tail -n 1 | cut -d= -f2-)"
 IAM_PUBLIC_HOST="$(grep '^IAM_PUBLIC_HOST=' "$APPS_ENV_FILE" | tail -n 1 | cut -d= -f2-)"
 PAYMENT_PUBLIC_HOST="$(grep '^PAYMENT_PUBLIC_HOST=' "$APPS_ENV_FILE" | tail -n 1 | cut -d= -f2-)"
-COMM_DB_SCHEMA="$(grep '^COMM_DB_SCHEMA=' "$APPS_ENV_FILE" | tail -n 1 | cut -d= -f2-)"
+COMM_DB_SCHEMA="$(grep '^COMM_DB_SCHEMA=' "$APPS_ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
 COMM_DB_SCHEMA="${COMM_DB_SCHEMA:-communication}"
 
 if [[ -z "$ENABLE_EDGE_PROXY" ]]; then
-  ENABLE_EDGE_PROXY="$(grep '^ENABLE_EDGE_PROXY=' "$APPS_ENV_FILE" | tail -n 1 | cut -d= -f2-)"
+  ENABLE_EDGE_PROXY="$(grep '^ENABLE_EDGE_PROXY=' "$APPS_ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
 fi
 ENABLE_EDGE_PROXY="${ENABLE_EDGE_PROXY:-true}"
 
@@ -131,6 +145,27 @@ cleanup_legacy_standalone_stacks() {
   docker volume rm payment-only_payment-postgres-data payment-only_payment-redis-data >/dev/null 2>&1 || true
 }
 
+migrate_legacy_gateway_stack_owner() {
+  local gateway_container="easydev-web-agency-backend"
+
+  if ! docker inspect "$gateway_container" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local compose_project
+  compose_project="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$gateway_container" 2>/dev/null || true)"
+
+  if [[ "$compose_project" != "easydev-apps" ]]; then
+    return 0
+  fi
+
+  echo "Migrating gateway container ownership from easydev-apps to easydev-core"
+
+  # Best-effort remove from old project first, then force-remove by name as fallback.
+  docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml rm -fsv web-agency-backend >/dev/null 2>&1 || true
+  docker rm -f "$gateway_container" >/dev/null 2>&1 || true
+}
+
 run_prisma_db_push() {
   local service_name="$1"
   local env_file="$2"
@@ -167,7 +202,11 @@ backup_running_image easydev-payment-service
 backup_running_image easydev-communication-backend
 backup_running_image easydev-web-agency-backend
 
-echo "Deploying core project (IAM + Payment)"
+# One-time migration path: if gateway was previously attached to easydev-apps,
+# remove that ownership before core project creates/reconciles the same container name.
+migrate_legacy_gateway_stack_owner
+
+echo "Deploying core project (IAM + Payment + Gateway)"
 if [[ "$SKIP_PULL" != "true" ]]; then
   docker compose --env-file "$CORE_ENV_FILE" -f compose.core.yml pull
 else
@@ -181,6 +220,7 @@ run_prisma_db_push payment-service "$CORE_ENV_FILE" compose.core.yml
 
 wait_for_health easydev-iam-platform
 wait_for_health easydev-payment-service
+wait_for_health easydev-web-agency-backend
 
 ensure_postgres_schema "$COMM_DB_SCHEMA"
 
@@ -190,16 +230,15 @@ if ! docker compose --env-file "$CORE_ENV_FILE" -f compose.core.yml exec -T paym
   echo "Payment seed returned non-zero. Continuing because plans may already exist."
 fi
 
-echo "Deploying app project (Gateway + AI Communication)"
+echo "Deploying app project (AI Communication)"
 if [[ "$SKIP_PULL" != "true" ]]; then
   docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml pull
 else
   echo "Skipping registry pulls for app project (SKIP_PULL=true)"
 fi
-docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml up -d --remove-orphans communication-backend web-agency-backend
+docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml up -d --remove-orphans communication-backend
 
 wait_for_health easydev-communication-backend
-wait_for_health easydev-web-agency-backend
 
 if [[ "$ENABLE_EDGE_PROXY" == "true" ]]; then
   docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml up -d edge-proxy

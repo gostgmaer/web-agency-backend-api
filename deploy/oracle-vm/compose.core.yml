@@ -114,6 +114,32 @@ services:
       - core-internal
       - easydev-services
 
+  web-agency-backend:
+    image: ${GATEWAY_IMAGE:-easydev-gateway:latest}
+    pull_policy: never
+    container_name: easydev-web-agency-backend
+    restart: unless-stopped
+    env_file:
+      - .env.apps
+    environment:
+      NODE_ENV: production
+      PORT: 3300
+      AUTH_SERVICE_URL: http://iam-platform:3301
+      PAYMENT_SERVICE_URL: http://payment-service:3302
+      COMMUNICATION_URL: http://communication-backend:3303/api/v1
+    ports:
+      - "3300:3300"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3300/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    mem_limit: 1536m
+    cpus: "1.00"
+    networks:
+      - core-internal
+      - easydev-services
+
   payment-worker:
     image: ${PAYMENT_IMAGE}
     pull_policy: never

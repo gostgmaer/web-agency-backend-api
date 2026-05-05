@@ -34,37 +34,6 @@ services:
       - apps-internal
       - easydev-services
 
-  web-agency-backend:
-    image: ${GATEWAY_IMAGE}
-    pull_policy: never
-    container_name: easydev-web-agency-backend
-    restart: unless-stopped
-    env_file:
-      - .env.apps
-    environment:
-      NODE_ENV: production
-      PORT: 3300
-      AUTH_SERVICE_URL: http://iam-platform:3301
-      PAYMENT_SERVICE_URL: http://payment-service:3302
-      COMMUNICATION_URL: http://communication-backend:3303/api/v1
-      NOTIFICATION_SERVICE_HEALTH_URL: ${NOTIFICATION_SERVICE_HEALTH_URL:-https://notification-service-iota.vercel.app/v1/health}
-      FILE_UPLOAD_SERVICE_HEALTH_URL: ${FILE_UPLOAD_SERVICE_HEALTH_URL:-https://file-upload-service-zjtv.onrender.com/health}
-    ports:
-      - "3300:3300"
-    depends_on:
-      communication-backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3300/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    mem_limit: 1536m
-    cpus: "1.00"
-    networks:
-      - apps-internal
-      - easydev-services
-
   edge-proxy:
     image: ${EDGE_PROXY_IMAGE:-caddy:2.9-alpine}
     container_name: easydev-edge-proxy
@@ -80,9 +49,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    depends_on:
-      web-agency-backend:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:80 || exit 1"]
       interval: 30s
