@@ -1,23 +1,31 @@
 import 'dotenv/config';
 
-function getRequiredEnv(name) {
-  const value = process.env[name];
-  if (!value || !String(value).trim()) {
-    throw new Error(`${name} environment variable is required`);
+function getRequiredAnyEnv(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value && String(value).trim()) {
+      return String(value).trim();
+    }
   }
-  return String(value).trim();
+  throw new Error(`${names.join(' or ')} environment variable is required`);
 }
 
-// IAM uses RS256 asymmetric signing when JWT_PRIVATE_KEY / JWT_PUBLIC_KEY are configured.
+// IAM uses RS256 asymmetric signing when JWT_PUBLIC_KEY is configured.
 // Downstream services verify with the RSA public key only — never with the private key.
-// Falls back to HS256 shared secret (JWT_ACCESS_SECRET) when JWT_PUBLIC_KEY is absent.
+// Falls back to HS256 shared secret (JWT_SECRET) when no public key is present.
+function resolveJwtPublicKey() {
+  const b64 = process.env.JWT_PUBLIC_KEY || process.env.IAM_JWT_PUBLIC_KEY;
+  if (!b64) return null;
+  return Buffer.from(b64, 'base64').toString('utf8');
+}
+
 function resolveJwtVerificationKey() {
-  const b64 = process.env.JWT_PUBLIC_KEY;
-  if (b64) return Buffer.from(b64, 'base64').toString('utf8');
-  return getRequiredEnv('JWT_ACCESS_SECRET');
+  const publicKey = resolveJwtPublicKey();
+  if (publicKey) return publicKey;
+  return getRequiredAnyEnv('JWT_SECRET', 'JWT_ACCESS_SECRET');
 }
 
 export const JWT_SECRET = resolveJwtVerificationKey();
-export const JWT_ALGORITHM = process.env.JWT_PUBLIC_KEY ? 'RS256' : 'HS256';
-export const JWT_ISSUER = getRequiredEnv('JWT_ISSUER');
-export const JWT_AUDIENCE = getRequiredEnv('JWT_AUDIENCE');
+export const JWT_ALGORITHM = resolveJwtPublicKey() ? 'RS256' : 'HS256';
+export const JWT_ISSUER = getRequiredAnyEnv('JWT_ISSUER');
+export const JWT_AUDIENCE = getRequiredAnyEnv('JWT_AUDIENCE');

@@ -1,0 +1,65 @@
+name: deploy-infra
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy easydev-core and easydev-product on Oracle Linux
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GHCR_USER: ${{ secrets.GHCR_USERNAME }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+        with:
+          host: ${{ secrets.ORACLE_VM_HOST }}
+          username: ${{ secrets.ORACLE_VM_USER }}
+          key: ${{ secrets.ORACLE_VM_SSH_KEY }}
+          port: ${{ secrets.ORACLE_VM_SSH_PORT }}
+          envs: GHCR_USER,GHCR_PAT
+          script_stop: true
+          script: |
+            set -euo pipefail
+
+            cd /home/opc/easydev
+            git fetch --all --prune
+            git checkout main
+            git pull --ff-only origin main
+
+            if ! docker network inspect easydev-net >/dev/null 2>&1; then
+              docker network create easydev-net
+            fi
+
+            required_files=(
+              env/.env.shared
+              env/.env.gateway
+              env/.env.auth
+              env/.env.payment
+              env/.env.ai-automation-communication
+              stacks/core/docker-compose.yml
+              stacks/product/docker-compose.yml
+            )
+
+            for f in "${required_files[@]}"; do
+              if [[ ! -f "$f" ]]; then
+                echo "Missing required file: $f"
+                exit 1
+              fi
+            done
+
+            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            docker compose -p easydev-core -f stacks/core/docker-compose.yml pull
+            docker compose -p easydev-core -f stacks/core/docker-compose.yml up -d --remove-orphans
+
+            docker compose -p easydev-product -f stacks/product/docker-compose.yml pull
+            docker compose -p easydev-product -f stacks/product/docker-compose.yml up -d --remove-orphans
+
+            docker logout ghcr.io

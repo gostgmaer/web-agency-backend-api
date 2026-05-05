@@ -1,0 +1,43 @@
+services:
+  ai-automation-communication-service:
+    # Internal-only product service. Reachable from gateway via Docker DNS.
+    image: ghcr.io/your-org/ai-automation-communication-service:latest
+    container_name: ai-automation-communication-service
+    restart: unless-stopped
+    env_file:
+      - /home/opc/easydev/env/.env.shared
+      - /home/opc/easydev/env/.env.ai-automation-communication
+    expose:
+      - "3000"
+    networks:
+      - easydev-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Future product service template:
+  # example-product-service:
+  #   image: ghcr.io/your-org/example-product-service:latest
+  #   container_name: example-product-service
+  #   restart: unless-stopped
+  #   env_file:
+  #     - /home/opc/easydev/env/.env.shared
+  #     - /home/opc/easydev/env/.env.example-product
+  #   expose:
+  #     - "3000"
+  #   networks:
+  #     - easydev-net
+
+networks:
+  easydev-net:
+    external: true
+    name: easydev-net

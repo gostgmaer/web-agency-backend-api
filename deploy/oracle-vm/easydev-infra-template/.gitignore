@@ -1,0 +1,18 @@
+# Runtime secrets (never commit)
+env/.env.shared
+env/.env.gateway
+env/.env.auth
+env/.env.payment
+env/.env.ai-automation-communication
+
+# Keep templates in git
+!env/*.example
+
+# Local operator files
+*.local
+*.bak
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

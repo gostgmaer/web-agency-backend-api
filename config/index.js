@@ -31,6 +31,16 @@ function getRequiredEnv(name) {
 	return String(value).trim();
 }
 
+function getFirstDefinedEnv(...names) {
+	for (const name of names) {
+		const value = process.env[name];
+		if (value && String(value).trim()) {
+			return String(value).trim();
+		}
+	}
+	return "";
+}
+
 const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL);
 const fileUploadServiceOrigin = resolveServiceOrigin(
 	process.env.FILE_UPLOAD_SERVICE_URL,
@@ -65,14 +75,15 @@ export const config = {
 	database: { mongoUri: process.env.MONGODB_URI },
 
 	jwt: {
-		// Must match JWT_ACCESS_SECRET in the user-auth-service
-		accessSecret: process.env.JWT_ACCESS_SECRET,
+		// Canonical key is JWT_SECRET; JWT_ACCESS_SECRET is legacy fallback.
+		accessSecret: getFirstDefinedEnv("JWT_SECRET", "JWT_ACCESS_SECRET"),
 		issuer: getRequiredEnv('JWT_ISSUER'),
 		audience: getRequiredEnv('JWT_AUDIENCE'),
 	},
 
 	email: {
-		serviceUrl: process.env.EMAIL_SERVICE_URL,
+		// Notification service is the canonical transactional email backend.
+		serviceUrl: getFirstDefinedEnv("NOTIFICATION_SERVICE_URL", "EMAIL_SERVICE_URL"),
 		fromEmail: process.env.FROM_EMAIL,
 		fromName: process.env.FROM_NAME,
 		adminEmail: process.env.ADMIN_EMAIL,
@@ -125,9 +136,9 @@ export const config = {
 	tenantId: process.env.TENANT_ID || null,
 	tenantSlug:
 		process.env.TENANT_SLUG ||
-		process.env.IAM_TENANT_SLUG ||
-		process.env.COMMUNICATION_IAM_TENANT_SLUG ||
 		process.env.TENANT_ID ||
+		process.env.IAM_TENANT_SLUG || // legacy alias
+		process.env.COMMUNICATION_IAM_TENANT_SLUG || // legacy alias
 		null,
 
 	// ─── Payment Gateways ────────────────────────────────────────────────────
@@ -187,8 +198,13 @@ export const config = {
 			],
 			iamProvisioning: {
 				provider: 'shared-iam',
-				applicationSlug: process.env.COMMUNICATION_IAM_APPLICATION_SLUG || 'easydev-ai-communication',
-				tenantSlug: process.env.COMMUNICATION_IAM_TENANT_SLUG || process.env.IAM_TENANT_SLUG || 'easydev',
+				applicationSlug: process.env.IAM_APPLICATION_SLUG || process.env.COMMUNICATION_IAM_APPLICATION_SLUG || 'easydev-ai-communication',
+				tenantSlug:
+					process.env.TENANT_SLUG ||
+					process.env.TENANT_ID ||
+					process.env.COMMUNICATION_IAM_TENANT_SLUG || // legacy alias
+					process.env.IAM_TENANT_SLUG || // legacy alias
+					'easydev',
 				defaultRole: process.env.COMMUNICATION_IAM_DEFAULT_ROLE || 'member',
 				bootstrapUser: true,
 				requirePasswordChangeOnFirstLogin: true,
@@ -244,8 +260,9 @@ export const config = {
 		throw new Error("DASHBOARD_URL environment variable is required");
 	})() },
 
-	// ─── Lead Email API Key (sent to email microservice) ─────────────────────
-	emailApiKey: process.env.EMAIL_SERVICE_API_KEY || '',
+	// ─── Notification API Key (transactional mail gateway) ───────────────────
+	emailApiKey:
+		getFirstDefinedEnv("NOTIFICATION_SERVICE_API_KEY", "EMAIL_SERVICE_API_KEY") || '',
 
 	// ─── Tenancy (multi-tenant lead scoping) ─────────────────────────────────
 	tenant: {
