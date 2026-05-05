@@ -182,7 +182,17 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Request-ID", "X-Tenant-Id", "x-tenant-id"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Request-ID",
+    "X-Tenant-Id",
+    "x-tenant-id",
+    "x-tenant-slug",
+    "X-Tenant-Slug",
+    "x-api-key",
+    "X-Api-Key",
+  ],
 };
 
 app.use(
