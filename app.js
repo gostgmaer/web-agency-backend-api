@@ -305,7 +305,7 @@ app.use(
 // for owned routes above, proxy routes sit on a separate path namespace.
 app.use("/api", proxyRoutes);
 
-app.get("/api/health", (req, res) => {
+const healthHandler = (req, res) => {
   const healthData = {
 		status: "healthy",
 		timestamp: new Date().toISOString(),
@@ -330,9 +330,12 @@ app.get("/api/health", (req, res) => {
     message: "Server is running successfully",
     data: healthData
   });
-});
+};
 
-app.get("/api/ready", (req, res) => {
+app.get("/api/health", healthHandler);
+app.get("/health", healthHandler);
+
+const readinessHandler = (req, res) => {
   // Check if database is connected (readyState: 1 = connected)
   const isDbReady = mongoose.connection.readyState === 1;
 
@@ -347,7 +350,10 @@ app.get("/api/ready", (req, res) => {
       message: "Service is not ready - database not connected"
     });
   }
-});
+};
+
+app.get("/api/ready", readinessHandler);
+app.get("/ready", readinessHandler);
 
 // Error handling
 app.use(notFound);

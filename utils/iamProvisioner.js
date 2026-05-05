@@ -61,32 +61,45 @@ async function getAdminToken() {
   }
 
   if (config.iam?.adminEmail && config.iam?.adminPassword) {
-    const response = await fetch(`${iamBaseUrl()}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: config.iam.adminEmail,
-        password: config.iam.adminPassword,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    try {
+      const response = await fetch(`${iamBaseUrl()}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: config.iam.adminEmail,
+          password: config.iam.adminPassword,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
 
-    const body = await parseResponseBody(response);
-    if (!response.ok) {
-      throw new Error(formatErrorMessage(body, 'IAM admin login failed.'));
+      const body = await parseResponseBody(response);
+      if (!response.ok) {
+        throw new Error(formatErrorMessage(body, 'IAM admin login failed.'));
+      }
+
+      const data = unwrapPayload(body);
+      const token = data?.accessToken;
+      const expiresIn = Number(data?.expiresIn || 900);
+
+      if (!token) {
+        throw new Error('IAM admin login succeeded but no access token was returned.');
+      }
+
+      cachedAdminToken = token;
+      cachedAdminTokenExpiry = now + expiresIn;
+      return cachedAdminToken;
+    } catch (error) {
+      if (config.iam?.adminJwt) {
+        logger.warn('IAM admin password login failed; falling back to configured admin JWT.', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        cachedAdminToken = config.iam.adminJwt;
+        cachedAdminTokenExpiry = now + 86400;
+        return cachedAdminToken;
+      }
+
+      throw error;
     }
-
-    const data = unwrapPayload(body);
-    const token = data?.accessToken;
-    const expiresIn = Number(data?.expiresIn || 900);
-
-    if (!token) {
-      throw new Error('IAM admin login succeeded but no access token was returned.');
-    }
-
-    cachedAdminToken = token;
-    cachedAdminTokenExpiry = now + expiresIn;
-    return cachedAdminToken;
   }
 
   if (config.iam?.adminJwt) {
@@ -113,14 +126,26 @@ async function iamRequest(path, options = {}) {
     timeout = 15_000,
   } = options;
 
-  const response = await fetch(`${iamBaseUrl()}${path}`, {
-    method,
-    headers: await authHeaders(),
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(timeout),
-  });
+  const requestOnce = async () => {
+    const response = await fetch(`${iamBaseUrl()}${path}`, {
+      method,
+      headers: await authHeaders(),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(timeout),
+    });
 
-  const payload = await parseResponseBody(response);
+    const payload = await parseResponseBody(response);
+    return { response, payload };
+  };
+
+  let { response, payload } = await requestOnce();
+
+  if (response.status === 401) {
+    cachedAdminToken = null;
+    cachedAdminTokenExpiry = 0;
+    ({ response, payload } = await requestOnce());
+  }
+
   if (!response.ok) {
     const error = new Error(formatErrorMessage(payload, `IAM request failed: ${method} ${path}`));
     error.status = response.status;
