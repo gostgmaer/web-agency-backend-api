@@ -312,6 +312,19 @@ router.post('/estimate', estimateValidation, validateRequest, (req, res, next) =
       customBreakdown,
     } = req.body;
 
+    // VALIDATION FIX: Ensure projectType and complexityLevel exist in PROFILES
+    // Prevents 500 errors from accessing undefined profile keys
+    if (!PROFILES[projectType]) {
+      throw new BadRequestError(
+        `Invalid projectType: "${projectType}". Allowed: ${Object.keys(PROFILES).join(', ')}`
+      );
+    }
+    if (!PROFILES[projectType][complexityLevel]) {
+      throw new BadRequestError(
+        `Invalid complexityLevel: "${complexityLevel}" for projectType "${projectType}". Allowed: ${Object.keys(PROFILES[projectType]).join(', ')}`
+      );
+    }
+
     // Validate we have something to work with
     if (amount == null && customBreakdown == null) {
       throw new BadRequestError(

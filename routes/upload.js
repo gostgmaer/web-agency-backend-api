@@ -29,7 +29,19 @@ router.post("/proposal", authenticate, async (req, res, next) => {
 		const normalizedBase64 =
 			String(contentBase64).includes(",") ? String(contentBase64).split(",")[1] : String(contentBase64);
 
-		const buffer = Buffer.from(normalizedBase64, "base64");
+		// VALIDATION FIX: Wrap base64 decoding in try-catch to return 400 instead of 500
+		// Invalid base64 string would crash Buffer.from and return server error
+		let buffer;
+		try {
+			buffer = Buffer.from(normalizedBase64, "base64");
+			if (buffer.length === 0) {
+				throw new BadRequestError("Invalid base64 content: decoding resulted in empty buffer");
+			}
+		} catch (decodeErr) {
+			throw new BadRequestError(
+				`Invalid base64 encoding: ${decodeErr instanceof Error ? decodeErr.message : 'unknown error'}`
+			);
+		}
 		fs.writeFileSync(outputPath, buffer);
 
 		const protocol = req.protocol || "http";

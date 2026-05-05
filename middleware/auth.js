@@ -40,6 +40,17 @@ export const authenticate = (req, res, next) => {
       sessionId: decoded.sessionId,
     };
 
+    // SECURITY FIX: Validate that user's tenantId matches the x-tenant-id header
+    // (when header is present). This prevents cross-tenant access via header manipulation.
+    const headerTenantId = req.headers['x-tenant-id'];
+    if (headerTenantId && decoded.tenantId !== headerTenantId) {
+      logger.warn(`Tenant mismatch: JWT tenantId=${decoded.tenantId} does not match header x-tenant-id=${headerTenantId} for user ${decoded.sub}`);
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: tenant isolation violation'
+      });
+    }
+
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {

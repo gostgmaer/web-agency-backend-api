@@ -100,6 +100,33 @@ export const config = {
 	},
 	auth: { serviceUrl: authServiceOrigin },
 
+	// ─── Dashboard Configuration ────────────────────────────────────────────
+	dashboard: {
+		url: process.env.DASHBOARD_URL || 'http://localhost:3500/dashboard',
+	},
+
+	// ─── Redis Configuration ────────────────────────────────────────────────
+	redis: {
+		host: process.env.REDIS_HOST || 'localhost',
+		port: parseInt(process.env.REDIS_PORT || '6379', 10),
+		password: process.env.REDIS_PASSWORD || undefined,
+		db: parseInt(process.env.REDIS_DB || '0', 10),
+		ssl: process.env.REDIS_SSL === 'true',
+	},
+
+	// ─── Tenant Configuration ───────────────────────────────────────────────
+	tenant: {
+		default: process.env.DEFAULT_TENANT_ID || '',
+		isolation: process.env.TENANT_ISOLATION_MODE || 'strict',
+	},
+
+	// ─── Performance Configuration ──────────────────────────────────────────
+	performance: {
+		maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE || '20', 10),
+		minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE || '5', 10),
+		requestTimeout: parseInt(process.env.REQUEST_TIMEOUT || '30000', 10),
+	},
+
 	// ─── IAM Service ─────────────────────────────────────────────────────────
 	// Same service as config.auth — AUTH_SERVICE_URL is the single source of truth.
 	// iam.serviceUrl is used for SSO token generation calls.

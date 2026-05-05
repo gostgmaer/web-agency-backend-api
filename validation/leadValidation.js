@@ -22,7 +22,12 @@ export const validateSubmitLead = [
   body('subject').trim().notEmpty().isLength({ max: 200 }).withMessage('Subject is required (max 200 chars)'),
   body('message').trim().notEmpty().isLength({ max: 5000 }).withMessage('Message is required (max 5000 chars)'),
   body('phone').optional().trim(),
-  body('gdprConsent').custom((v) => v === true || v === 'true').withMessage('GDPR consent is required'),
+  // VALIDATION FIX: Add .notEmpty() to enforce GDPR consent
+  // Previously, falsy values could bypass the custom validator
+  body('gdprConsent')
+    .notEmpty().withMessage('GDPR consent is required')
+    .custom((v) => v === true || v === 'true')
+    .withMessage('GDPR consent must be explicitly accepted (true)'),
   body('budget').optional().isIn(BUDGET_ENUM).withMessage('Invalid budget value'),
   body('timeline').optional().isIn(TIMELINE_ENUM).withMessage('Invalid timeline value'),
   body('projectType').optional().isIn(PROJECT_TYPE_ENUM).withMessage('Invalid project type'),

@@ -180,6 +180,17 @@ export const errorHandler = (err, req, res, next) => {
 };
 
 /**
+ * Async handler wrapper
+ * Catches async errors and passes them to the global error handler
+ * Usage: export const myRoute = catchAsync(async (req, res) => { ... });
+ */
+export const catchAsync = (fn) => {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+};
+
+/**
  * 404 Not Found handler
  */
 export const notFound = (req, res) => {

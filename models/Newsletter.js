@@ -130,6 +130,13 @@ newsletterSchema.index({ isConfirmed: 1 });
 newsletterSchema.index({ createdAt: -1 });
 newsletterSchema.index({ tags: 1 });
 newsletterSchema.index({ 'preferences.categories': 1 });
+// SCHEMA FIX: Add TTL index on confirmationToken for auto-expiry
+// Confirmation tokens expire after 24 hours to prevent brute-force attacks
+// Database automatically deletes documents where tokenExpiresAt is in the past
+newsletterSchema.index(
+  { confirmationToken: 1 },
+  { sparse: true, expireAfterSeconds: 86400 } // 24 hours
+);
 
 // Generate confirmation token
 newsletterSchema.methods.generateConfirmationToken = async function () {

@@ -167,6 +167,12 @@ export const markLost = catchAsync(async (req, res) => {
 // POST /api/leads/bulk-update
 export const bulkUpdate = catchAsync(async (req, res) => {
   const { ids, ...updates } = req.body;
+  // SECURITY FIX: Validate that ALL IDs belong to the requesting tenant before bulk update
+  // Prevents cross-tenant data modification via bulk operation exploit
+  const leads = await Lead.find({ _id: { $in: ids }, tenantId: req.tenantId });
+  if (leads.length !== ids.length) {
+    throw new AppError(`Not all requested leads belong to your tenant`, 403, 'TENANT_ISOLATION_VIOLATION');
+  }
   await Lead.bulkUpdateStatus(ids, updates, req.user.id);
   return sendSuccess(res, { message: `${ids.length} leads updated` });
 });
@@ -174,6 +180,11 @@ export const bulkUpdate = catchAsync(async (req, res) => {
 // POST /api/leads/bulk-delete
 export const bulkDelete = catchAsync(async (req, res) => {
   const { ids } = req.body;
+  // SECURITY FIX: Validate that ALL IDs belong to the requesting tenant before bulk delete
+  const leads = await Lead.find({ _id: { $in: ids }, tenantId: req.tenantId });
+  if (leads.length !== ids.length) {
+    throw new AppError(`Not all requested leads belong to your tenant`, 403, 'TENANT_ISOLATION_VIOLATION');
+  }
   await Lead.bulkUpdateStatus(ids, { isDeleted: true, deletedAt: new Date(), deletedBy: req.user.id }, req.user.id);
   return sendSuccess(res, { message: `${ids.length} leads deleted` });
 });

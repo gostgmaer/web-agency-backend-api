@@ -180,6 +180,9 @@ const leadSchema = new mongoose.Schema(
 // ─── Indexes ──────────────────────────────────────────────────────────────────
 leadSchema.index({ tenantId: 1, email: 1 });
 leadSchema.index({ tenantId: 1, status: 1 });
+// SCHEMA FIX: Add compound index for proposal expiry sweep queries
+// Allows efficient filtering of leads with expired proposals
+leadSchema.index({ tenantId: 1, status: 1, proposalExpiresAt: 1 });
 leadSchema.index({ tenantId: 1, createdAt: -1 });
 leadSchema.index({ tenantId: 1, isDeleted: 1 });
 leadSchema.index({ tenantId: 1, proposalExpiresAt: 1 });

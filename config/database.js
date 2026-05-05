@@ -4,6 +4,14 @@ import { config } from "./index.js";
 
 const MONGODB_URI = config.database.mongoUri;
 
+// Validate MongoDB URI at startup
+if (!MONGODB_URI) {
+  throw new Error(
+    'MONGODB_URI environment variable is required. Please set it in your .env file.\n' +
+    'Example: mongodb://localhost:27017/easydev'
+  );
+}
+
 /**
  * MongoDB connection options optimized for performance
  */

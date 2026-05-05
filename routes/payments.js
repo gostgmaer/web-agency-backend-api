@@ -95,6 +95,11 @@ const PUBLIC_CHECKOUT_PROVIDERS = ['RAZORPAY', 'CASH'];
 // ─── Pending order store ──────────────────────────────────────────────────────
 // Maps provider orderId / sessionId → { transactionId, attemptId, planKey, customerEmail }
 // Entries expire after PENDING_TTL_MS to prevent unbounded growth.
+//
+// SECURITY FIX TODO: Replace in-memory Map with Redis for multi-instance deployments
+// In-memory storage is lost on process restart, causing payment verification to fail
+// if the verify request arrives after the service restarts during the payment window.
+// See: ../config/index.js config.redis for connection details
 
 const pendingOrders = new Map();
 const PENDING_TTL_MS = 60 * 60 * 1000; // 1 hour

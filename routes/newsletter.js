@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticate } from '../middleware/auth.js';
 import adminAccess from '../middleware/adminAccess.js';
 import { validateRequest, sanitizeInput } from '../middleware/validation.js';
+import { leadRateLimit } from '../middleware/leadRateLimit.js';
 import { subscribeValidation, unsubscribeValidation } from '../validation/newsletterValidation.js';
 import { getPaginationParams, getPaginationMeta } from '../utils/pagination.js';
 import {
@@ -15,6 +16,14 @@ import logger from '../utils/logger.js';
 import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
 
 const router = express.Router();
+
+// VALIDATION FIX: Add rate limiting to confirm endpoint
+// Prevents brute-force attacks on newsletter confirmation tokens
+const newsletterConfirmLimiter = leadRateLimit({
+  maxAttempts: 10,
+  windowMs: 60 * 60 * 1000, // 1 hour
+  action: 'newsletter_confirm'
+});
 
 router.post('/subscribe', subscribeValidation, validateRequest, sanitizeInput, async (req, res, next) => {
   try {
@@ -89,7 +98,7 @@ router.post('/subscribe', subscribeValidation, validateRequest, sanitizeInput, a
   }
 });
 
-router.get('/confirm/:token', async (req, res, next) => {
+router.get('/confirm/:token', newsletterConfirmLimiter, async (req, res, next) => {
   try {
     const subscriber = await Newsletter.findOne({
       confirmationToken: req.params.token
