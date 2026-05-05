@@ -1,2 +1,4 @@
 node_modules
 .env
+/deploy/oracle-vm/.env.core
+/deploy/oracle-vm/.env.apps

@@ -311,6 +311,49 @@ router.patch('/admin/ai-settings', async (req, res, next) => {
   }
 });
 
+router.get('/admin/email-provider-settings', async (req, res, next) => {
+  try {
+    const response = await axios.get(`${getCommunicationApiBase()}/admin/email-provider-settings`, {
+      headers: {
+        Authorization: getBearerAuthorization(req),
+      },
+      timeout: 10_000,
+    });
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to fetch AI Communication email provider settings.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
+router.patch('/admin/email-provider-settings/:providerKey', async (req, res, next) => {
+  try {
+    const response = await axios.patch(
+      `${getCommunicationApiBase()}/admin/email-provider-settings/${encodeURIComponent(req.params.providerKey)}`,
+      req.body,
+      {
+        headers: {
+          Authorization: getBearerAuthorization(req),
+          'Content-Type': 'application/json',
+        },
+        timeout: 10_000,
+      },
+    );
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    return next(new AppError(
+      err?.response?.data?.message || 'Failed to update AI Communication email provider settings.',
+      err?.response?.status || 502,
+    ));
+  }
+});
+
 router.get('/admin/usage', async (req, res, next) => {
   try {
     const response = await axios.get(`${getCommunicationApiBase()}/admin/usage`, {

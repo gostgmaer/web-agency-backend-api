@@ -331,6 +331,8 @@ x-tenant-id: easydev
 | `GET` | `/communication/admin/providers/health` | provider health summary |
 | `PATCH` | `/communication/admin/providers/:id` | update provider |
 | `PATCH` | `/communication/admin/providers/:id/toggle` | enable or disable provider |
+| `GET` | `/communication/admin/email-provider-settings` | list platform email provider settings |
+| `PATCH` | `/communication/admin/email-provider-settings/:providerKey` | update a platform email provider setting |
 
 Provision example:
 
