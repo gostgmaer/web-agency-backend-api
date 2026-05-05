@@ -23,14 +23,14 @@ Workspace source: `../multi-tannet-auth-services`
 Recommended local URL:
 
 ```text
-http://localhost:4002/api/v1/iam
+http://localhost:3304/api/v1/iam
 ```
 
 Rules:
 
 - IAM is the only service that issues access and refresh tokens.
 - `middleware/auth.js` in this repo only verifies JWTs with the shared secret.
-- The JWT claims must satisfy `iss === 'user-auth-service'` and `aud === 'dashboard-app'`.
+- The JWT claims must satisfy `iss === 'iam-service'` and `aud === 'dashboard-app'`.
 - Use `GET /api/auth/me` for session validation. Do not build new integrations around `/api/auth/token/verify`.
 - Gateway auth proxies should target the IAM routes behind `AUTH_SERVICE_URL`.
 
@@ -41,7 +41,7 @@ Workspace source: `../payment-microservice`
 Recommended local URL:
 
 ```text
-http://localhost:3200/api/v1
+http://localhost:3302/api/v1
 ```
 
 Rules:
@@ -56,8 +56,8 @@ Workspace source: `../Product/ai automation communication`
 Recommended local URLs:
 
 ```text
-Backend:  http://localhost:3001/api/v1
-Frontend: http://localhost:3002
+Backend:  http://localhost:3303/api/v1
+Frontend: http://localhost:3000
 ```
 
 Rules:
@@ -154,15 +154,15 @@ Rules:
 ## Environment Variables That Matter For Integration
 
 ```env
-PORT=3500
+PORT=3301
 JWT_ACCESS_SECRET=match-iam-JWT_SECRET
-JWT_ISSUER=user-auth-service
+JWT_ISSUER=iam-service
 JWT_AUDIENCE=dashboard-app
-AUTH_SERVICE_URL=http://localhost:4002
-PAYMENT_SERVICE_URL=http://localhost:3200
-COMMUNICATION_SERVICE_URL=http://localhost:3001
-FILE_UPLOAD_SERVICE_URL=http://localhost:4001
-EMAIL_SERVICE_URL=http://localhost:4000
+AUTH_SERVICE_URL=http://localhost:3304
+PAYMENT_SERVICE_URL=http://localhost:3302
+COMMUNICATION_SERVICE_URL=http://localhost:3303
+FILE_UPLOAD_SERVICE_URL=http://localhost:3310
+EMAIL_SERVICE_URL=http://localhost:3309
 ```
 
 ## Avoid These Mistakes

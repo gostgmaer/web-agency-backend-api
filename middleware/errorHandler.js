@@ -228,6 +228,5 @@ export const asyncHandler = (fn) => (req, res, next) => {
 };
 
 /** Alias used by lead controllers */
-export const catchAsync = asyncHandler;
 
 export default { errorHandler, notFound, asyncHandler, catchAsync };
