@@ -28,11 +28,24 @@ function serviceUnavailable(serviceName) {
  *   → forwarded as /api/auth/login on the target.
  */
 function buildProxy(target, basePath, serviceName) {
+  // Resolved once at startup — safe for single-tenant deployments.
+  const fallbackTenantId = config.tenantId || config.tenantSlug || 'easydev';
+
   return createProxyMiddleware({
     target,
     changeOrigin: true,
     pathRewrite: (path) => `${basePath}${path}`,
     on: {
+      /**
+       * Inject x-tenant-id on every upstream request when the client has not
+       * supplied one. This ensures IAM / downstream services always have a
+       * tenant context without requiring every caller to set the header.
+       */
+      proxyReq(proxyReq, req) {
+        if (!req.headers['x-tenant-id']) {
+          proxyReq.setHeader('x-tenant-id', fallbackTenantId);
+        }
+      },
       error(err, _req, res) {
         logger.error(`${serviceName} proxy error:`, { message: err.message });
         if (!res.headersSent) {
