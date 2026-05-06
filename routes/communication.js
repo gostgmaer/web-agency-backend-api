@@ -15,6 +15,7 @@
 
 import express       from 'express';
 import axios         from 'axios';
+import jwt           from 'jsonwebtoken';
 import { provision } from '../utils/productProvisioner.js';
 import { resolveApplicationId, resolveTenantId } from '../utils/iamProvisioner.js';
 import { AppError }  from '../utils/errors.js';
@@ -42,6 +43,21 @@ function getBearerAuthorization(req) {
   }
 
   return auth;
+}
+
+function decodeTenantIdFromBearer(authorizationHeader) {
+  if (!authorizationHeader || !authorizationHeader.startsWith('Bearer ')) {
+    return null;
+  }
+
+  try {
+    const token = authorizationHeader.slice(7).trim();
+    const decoded = jwt.decode(token);
+    const tenantId = typeof decoded?.tenantId === 'string' ? decoded.tenantId.trim() : '';
+    return tenantId || null;
+  } catch {
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,14 +194,22 @@ router.get('/launch', async (req, res, next) => {
     }
 
     const iamCfg = config.iam;
+    const tokenTenantId = decodeTenantIdFromBearer(customerJwt);
     const communicationTenantRef =
+      tokenTenantId ||
       config.products?.['easydev-ai-communication']?.iamProvisioning?.tenantSlug ||
       config.tenant.defaultTenantId;
 
     let resolvedTenantId;
     if (communicationTenantRef) {
       try {
-        resolvedTenantId = await resolveTenantId(communicationTenantRef);
+        const looksLikeUuid =
+          typeof communicationTenantRef === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(communicationTenantRef);
+
+        resolvedTenantId = looksLikeUuid
+          ? communicationTenantRef
+          : await resolveTenantId(communicationTenantRef);
       } catch (tenantError) {
         logger.error('Failed to resolve IAM tenant for SSO launch', {
           tenantRef: communicationTenantRef,
@@ -195,9 +219,7 @@ router.get('/launch', async (req, res, next) => {
       }
     }
 
-    const launchApplicationId = resolvedAppId || (resolvedSlug
-      ? await resolveApplicationId(resolvedSlug, resolvedTenantId)
-      : undefined);
+    const launchApplicationId = resolvedAppId;
 
     const iamRes = await axios.post(
       `${iamCfg.serviceUrl}/api/v1/iam/sso/generate`,
@@ -224,12 +246,15 @@ router.get('/launch', async (req, res, next) => {
       throw new AppError(`SSO launch misconfigured — set frontendUrl on the '${identifier}' application record in IAM.`, 503);
     }
 
-    if (!launchApplicationId) {
-      throw new AppError('SSO launch misconfigured — unable to resolve an application id for the requested product.', 503);
+    const launchParams = new URLSearchParams({ token });
+    if (resolvedSlug) {
+      launchParams.set('slug', resolvedSlug);
+    }
+    if (launchApplicationId) {
+      launchParams.set('appId', launchApplicationId);
     }
 
-    const appParam = `appId=${encodeURIComponent(launchApplicationId)}`;
-    const launchUrl = `${frontendUrl}/sso?token=${encodeURIComponent(token)}&${appParam}`;
+    const launchUrl = `${frontendUrl}/sso?${launchParams.toString()}`;
 
     logger.info('SSO launch URL generated', { slug: resolvedSlug, applicationId: launchApplicationId });
 
