@@ -13,9 +13,14 @@ import { warmIamProvisioningCache } from "./utils/iamProvisioner.js";
 const PORT = config.app.port || 3000;
 const REQUEST_TIMEOUT = Number(config.performance.requestTimeout) || 30000;
 const SHUTDOWN_TIMEOUT = Number(config.performance.shutdownTimeout) || 10000;
+const STARTUP_ATTEMPTS_PER_CYCLE = 5;
+const STARTUP_CYCLE_WINDOW_MS = 90_000; // 1.5 minutes total for quick retries
+const STARTUP_RETRY_PAUSE_MS = 5 * 60_000; // 5 minutes between retry cycles
 
 let server;
 let isShuttingDown = false;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function syncDefaultTenantFromIam() {
   const iamBase = config.iam?.serviceUrl;
@@ -66,6 +71,54 @@ async function syncDefaultTenantFromIam() {
     });
     throw new Error(`Tenant verification failed: ${error?.message || "Unknown error"}`);
   }
+}
+
+async function waitForStartupDependencies() {
+  const retryDelayMs = Math.floor(
+    STARTUP_CYCLE_WINDOW_MS / Math.max(STARTUP_ATTEMPTS_PER_CYCLE - 1, 1),
+  );
+  let cycle = 0;
+
+  while (!isShuttingDown) {
+    cycle += 1;
+
+    for (let attempt = 1; attempt <= STARTUP_ATTEMPTS_PER_CYCLE; attempt += 1) {
+      try {
+        await syncDefaultTenantFromIam();
+        await warmIamProvisioningCache();
+        logger.info("Startup dependencies are ready", {
+          cycle,
+          attempt,
+        });
+        return;
+      } catch (error) {
+        logger.error("Startup dependency check failed", {
+          cycle,
+          attempt,
+          maxAttempts: STARTUP_ATTEMPTS_PER_CYCLE,
+          retryDelayMs,
+          error: error?.message,
+        });
+
+        const isLastAttempt = attempt === STARTUP_ATTEMPTS_PER_CYCLE;
+        if (!isLastAttempt && !isShuttingDown) {
+          await sleep(retryDelayMs);
+        }
+      }
+    }
+
+    if (isShuttingDown) {
+      break;
+    }
+
+    logger.warn("Startup dependencies unavailable after retry cycle; pausing before next cycle", {
+      cycle,
+      pauseMs: STARTUP_RETRY_PAUSE_MS,
+    });
+    await sleep(STARTUP_RETRY_PAUSE_MS);
+  }
+
+  throw new Error("Server shutdown requested while waiting for startup dependencies");
 }
 
 /**
@@ -144,8 +197,7 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
  */
 const startServer = async () => {
   try {
-    await syncDefaultTenantFromIam();
-    await warmIamProvisioningCache();
+    await waitForStartupDependencies();
     const runtimeTenant = getRuntimeTenantFallback();
 
     logger.info("Gateway tenant startup config", {

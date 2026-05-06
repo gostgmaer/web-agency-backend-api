@@ -193,9 +193,10 @@ export const config = {
 			],
 			iamProvisioning: {
 				provider: 'shared-iam',
-				applicationSlug: process.env.IAM_APPLICATION_SLUG || process.env.COMMUNICATION_IAM_APPLICATION_SLUG || 'easydev-ai-communication',
+				// Source of truth: product config key, not env.
+				applicationSlug: 'easydev-ai-communication',
 				tenantSlug: configuredTenantRef,
-				defaultRole: process.env.COMMUNICATION_IAM_DEFAULT_ROLE || 'member',
+				defaultRole: 'member',
 				bootstrapUser: true,
 				requirePasswordChangeOnFirstLogin: true,
 			},

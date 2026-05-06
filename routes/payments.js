@@ -317,6 +317,18 @@ function mapSubscriptionStatus(status) {
   return SUBSCRIPTION_STATUS_MAP[status.toUpperCase()] || status.toLowerCase();
 }
 
+function normalizeCustomerSubscriptionStatus(subscription) {
+  const mappedStatus = mapSubscriptionStatus(subscription?.status);
+  const trialEndMs = subscription?.trialEnd ? Date.parse(subscription.trialEnd) : Number.NaN;
+  const inTrialWindow = Number.isFinite(trialEndMs) && trialEndMs > Date.now();
+
+  if (inTrialWindow && mappedStatus !== 'cancelled' && mappedStatus !== 'expired') {
+    return 'trial';
+  }
+
+  return mappedStatus;
+}
+
 function isBlockingProductStatus(status) {
   return BLOCKING_SUBSCRIPTION_STATUSES.has(String(status || '').toLowerCase());
 }
@@ -515,6 +527,8 @@ function normalizeCustomerProduct(subscription) {
   const { productId, productConfig } = resolveConfiguredProduct(rawProductId, planApplicationId);
   const launchSlug = productConfig?.iamProvisioning?.applicationSlug || planApplicationId || productId || null;
 
+  const normalizedStatus = normalizeCustomerSubscriptionStatus(subscription);
+
   return {
     id: subscription?.id,
     productId,
@@ -528,11 +542,11 @@ function normalizeCustomerProduct(subscription) {
     planName: configuredPlan?.productName || plan.name || normalizedPlanId || 'Plan',
     price: toMajorCurrencyUnit(plan.amount, plan.currency),
     currency: plan.currency || 'INR',
-    status: mapSubscriptionStatus(subscription?.status),
+    status: normalizedStatus,
     trialEndsAt: subscription?.trialEnd || null,
     currentPeriodStart: subscription?.currentPeriodStart || null,
     currentPeriodEnd: subscription?.currentPeriodEnd || null,
-    cancelAtPeriodEnd: Boolean(subscription?.cancelledAt) && mapSubscriptionStatus(subscription?.status) !== 'cancelled',
+    cancelAtPeriodEnd: Boolean(subscription?.cancelledAt) && normalizedStatus !== 'cancelled',
     daysRemaining: getDaysRemaining(subscription?.trialEnd || subscription?.currentPeriodEnd),
     billingProvider: typeof metadata.provider === 'string' ? metadata.provider : null,
   };
