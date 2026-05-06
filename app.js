@@ -19,7 +19,6 @@ import calculatorRoutes     from "./routes/calculator.js";
 import paymentsRoutes       from "./routes/payments.js";
 import communicationRoutes  from "./routes/communication.js";
 import jobAgentRoutes       from "./routes/job-agent.js";
-import jobAgentPortalRoutes from "./routes/job-agent-portal.js";
 import leadRoutes           from "./routes/leads.js";
 
 // Proxy routes — forwarded to microservices
@@ -312,7 +311,6 @@ app.use("/api/newsletter",    jsonParser, urlencodedParser, newsletterRoutes);
 app.use("/api/upload",        jsonParser, urlencodedParser, uploadRoutes);
 app.use("/api/calculator",    jsonParser,                   calculatorRoutes);
 app.use("/api/communication", jsonParser,                   communicationRoutes);
-app.use("/api/job-agent/portal",         jobAgentPortalRoutes);  // raw stream — no jsonParser (multipart + createProxyMiddleware)
 app.use("/api/job-agent",     jsonParser,                   jobAgentRoutes);
 app.use("/api/leads",         jsonParser, urlencodedParser, leadRoutes);
 app.use("/api/platform-health", jsonParser,                 platformHealthRoutes);

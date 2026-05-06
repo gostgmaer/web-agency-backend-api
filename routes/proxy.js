@@ -1,16 +1,64 @@
-import express from 'express';
+﻿/**
+ * routes/proxy.js
+ *
+ * Single proxy file for all microservice forwarding.
+ *
+ * Two proxy patterns:
+ *
+ *   buildProxy(target, basePath, name)
+ *     Bearer-auth proxy for dashboard / API routes.
+ *     Always injects x-tenant-id.
+ *     When authenticate() runs first, also injects x-user-id, x-user-role,
+ *     x-session-id, x-request-id from the verified JWT payload.
+ *
+ *   buildPortalProxy(cookieName, target, name)
+ *     Cookie-auth proxy for standalone product frontends.
+ *     - POST /api/v1/auth/sso/exchange  — PUBLIC (sets the session cookie)
+ *     - ALL /*                          — validates the session cookie, then
+ *                                         streams the raw body to the backend
+ *     Rate limited to 300 req/min in production.
+ *     Only the session cookie is forwarded downstream (all others stripped).
+ *
+ * Route map (all mounted under app.use("/api", proxyRoutes)):
+ *
+ *   PUBLIC
+ *     /auth/*                   → IAM /api/v1/iam/auth/*
+ *     /iam/health               → IAM /api/v1/iam/health
+ *
+ *   AUTHENTICATED (Bearer token verified at gateway)
+ *     /profile/*                → IAM /api/v1/iam/profile/*
+ *     /rbac/*                   → IAM /api/v1/iam/rbac/*
+ *     /users/*                  → IAM /api/v1/iam/users/*
+ *     /customer/users/*         → IAM /api/v1/iam/users/*
+ *     /tenants/*                → IAM /api/v1/iam/tenants/*
+ *     /sessions/*               → IAM /api/v1/iam/sessions/*
+ *     /iam/logs|stats|security|api-keys|webhooks|flags|apps|settings/*
+ *                               → IAM
+ *     /files/*                  → File Upload /api/files/*
+ *     /customer/*               → AI Communication /api/v1/*
+ *     /communication/admin/*    → AI Communication /api/v1/admin/*
+ *     /job-agent/proxy/*        → Job Agent /api/v1/*
+ *
+ *   PORTAL (cookie-auth, raw stream — product frontends)
+ *     /portal/communication/*   → AI Communication (ea_comm_session cookie)
+ *     /portal/job-agent/*       → Job Agent        (ja_session cookie)
+ */
+
+import express                  from 'express';
 import { createProxyMiddleware } from 'http-proxy-middleware';
-import { config } from '../config/index.js';
-import { apiCall } from '../lib/axiosCall.js';
-import logger from '../utils/logger.js';
+import jwt                       from 'jsonwebtoken';
+import rateLimit                 from 'express-rate-limit';
+import axios                     from 'axios';
+import { config }                from '../config/index.js';
+import { JWT_SECRET }            from '../config/jwt.js';
+import logger                    from '../utils/logger.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
+import { authenticate }          from '../middleware/auth.js';
 
 const router = express.Router();
-const manualProxyJsonParser = express.json({ limit: '1mb' });
 
-/**
- * Returns a 503 handler for when a service URL is not configured.
- */
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function serviceUnavailable(serviceName) {
   return (_req, res) => {
     logger.warn(`Proxy request blocked — ${serviceName} URL not configured`);
@@ -21,12 +69,36 @@ function serviceUnavailable(serviceName) {
   };
 }
 
+/** Parse protocol+host from a full URL ("http://localhost:3303/api/v1" → "http://localhost:3303"). */
+function parseHost(raw) {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.trim().replace(/\/+$/, ''));
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return raw.trim().replace(/\/api.*$/, '').replace(/\/+$/, '') || null;
+  }
+}
+
+/** Parse pathname from a full URL ("http://localhost:3306/api/v1" → "/api/v1"). */
+function parsePath(raw, fallback = '/api/v1') {
+  if (!raw) return fallback;
+  try { return new URL(raw.trim().replace(/\/+$/, '')).pathname.replace(/\/$/, '') || fallback; }
+  catch { return fallback; }
+}
+
+/** Extract one named cookie from a raw Cookie header string. */
+function extractCookie(header, name) {
+  if (!header) return null;
+  const m = String(header).match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+// ─── buildProxy ───────────────────────────────────────────────────────────────
 /**
- * Builds a proxy middleware that rewrites the Express-stripped path back to its
- * full form before forwarding to the target service.
- *
- * Example: mounted at /api/auth, req.url = /login
- *   → forwarded as /api/auth/login on the target.
+ * Bearer-auth transparent proxy.
+ * Injects x-tenant-id always.
+ * Injects x-user-* when authenticate() has already populated req.user.
  */
 function buildProxy(target, basePath, serviceName) {
   return createProxyMiddleware({
@@ -34,18 +106,15 @@ function buildProxy(target, basePath, serviceName) {
     changeOrigin: true,
     pathRewrite: (path) => `${basePath}${path}`,
     on: {
-      /**
-       * Inject x-tenant-id on every upstream request when the client has not
-       * supplied one. This ensures IAM / downstream services always have a
-       * tenant context without requiring every caller to set the header.
-       */
       proxyReq(proxyReq, req) {
-        const runtimeTenant = getRuntimeTenantFallback();
-        const fallbackTenantId = runtimeTenant.tenantId;
-
-        if (!req.headers['x-tenant-id'] && fallbackTenantId) {
-          proxyReq.setHeader('x-tenant-id', fallbackTenantId);
+        const { tenantId } = getRuntimeTenantFallback();
+        if (!req.headers['x-tenant-id'] && tenantId) proxyReq.setHeader('x-tenant-id', tenantId);
+        if (req.user) {
+          proxyReq.setHeader('x-user-id',    req.user.id        ?? '');
+          proxyReq.setHeader('x-user-role',  req.user.role      ?? '');
+          proxyReq.setHeader('x-session-id', req.user.sessionId ?? '');
         }
+        if (req.requestId) proxyReq.setHeader('x-request-id', req.requestId);
       },
       error(err, _req, res) {
         logger.error(`${serviceName} proxy error:`, { message: err.message });
@@ -60,225 +129,193 @@ function buildProxy(target, basePath, serviceName) {
   });
 }
 
-const CUSTOMER_CHANNEL_TYPE_MAP = {
-  email: 'email_smtp',
-  whatsapp: 'whatsapp_meta',
-};
+// ─── buildPortalProxy ─────────────────────────────────────────────────────────
+/**
+ * Cookie-auth portal proxy for standalone product frontends.
+ *
+ * @param {string} cookieName  Session cookie name set by the product backend (e.g. "ja_session")
+ * @param {string|null} target Protocol+host of the backend (e.g. "http://localhost:3306")
+ * @param {string} serviceName Name used in log / error messages
+ * @returns {express.Router}
+ */
+function buildPortalProxy(cookieName, target, serviceName) {
+  const r = express.Router();
 
-function customerChannelUrl(path = '') {
-  const normalizedBasePath = communicationProxyPath.endsWith('/')
-    ? communicationProxyPath.slice(0, -1)
-    : communicationProxyPath;
-  return `${communicationProxyTarget}${normalizedBasePath}${path}`;
-}
+  // Rate limit — 300 req/min per IP in production; unlimited in dev
+  r.use(rateLimit({
+    windowMs: 60_000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Too many requests. Please slow down.' },
+    skip: () => process.env.NODE_ENV !== 'production',
+  }));
 
-function customerProxyHeaders(req) {
-  return {
-    ...(req.headers.authorization ? { Authorization: req.headers.authorization } : {}),
-  };
-}
-
-function normalizeCustomerChannel(channel) {
-  const type = String(channel.channelType || '').startsWith('whatsapp') ? 'whatsapp' : 'email';
-
-  return {
-    id: channel.id,
-    type,
-    identifier: channel.identifier ?? channel.metadata?.identifier ?? '',
-    displayName: channel.displayName,
-    status: channel.isActive ? 'active' : 'inactive',
-    connectedAt: channel.createdAt,
-    ...(typeof channel.messageCount === 'number' ? { messageCount: channel.messageCount } : {}),
-  };
-}
-
-function buildCustomerChannelPayload(body) {
-  const type = typeof body?.type === 'string' ? body.type.trim().toLowerCase() : '';
-  const identifier = typeof body?.identifier === 'string' ? body.identifier.trim() : '';
-  const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : '';
-
-  if (!CUSTOMER_CHANNEL_TYPE_MAP[type]) {
-    return { error: 'type must be one of: email, whatsapp' };
-  }
-  if (!identifier) {
-    return { error: 'identifier is required' };
-  }
-  if (!displayName) {
-    return { error: 'displayName is required' };
+  if (!target) {
+    r.use(serviceUnavailable(serviceName));
+    return r;
   }
 
-  return {
-    channelType: CUSTOMER_CHANNEL_TYPE_MAP[type],
-    identifier,
-    displayName,
-    credentials: {
-      placeholder: true,
-      identifier,
-      source: 'customer-dashboard',
+  // ── PUBLIC: SSO token → session cookie exchange ──────────────────────────
+  // The product frontend exchanges the short-lived IAM SSO token for an
+  // httpOnly session cookie.  We use axios (not createProxyMiddleware) so we
+  // can intercept Set-Cookie and re-set it against the gateway origin.
+  r.post('/api/v1/auth/sso/exchange', express.json({ limit: '1mb' }), async (req, res, next) => {
+    try {
+      const response = await axios.post(
+        `${target}/api/v1/auth/sso/exchange`,
+        req.body ?? {},
+        {
+          headers: {
+            'Content-Type':   'application/json',
+            'x-request-id':   req.requestId      ?? '',
+            'x-forwarded-for': req.ip             ?? '',
+          },
+          timeout: 15_000,
+          validateStatus: () => true,
+        },
+      );
+      const setCookies = response.headers['set-cookie'];
+      if (setCookies) res.setHeader('Set-Cookie', setCookies);
+      return res.status(response.status).json(response.data);
+    } catch (err) { next(err); }
+  });
+
+  // ── AUTHENTICATED: validate session cookie ───────────────────────────────
+  r.use((req, res, next) => {
+    const token = extractCookie(req.headers.cookie ?? '', cookieName);
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'No active session. Please open the app from your EasyDev dashboard.',
+      });
+    }
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.user = {
+        id:       decoded.sub,
+        email:    decoded.email,
+        role:     Array.isArray(decoded.roles) ? decoded.roles[0] : (decoded.role ?? ''),
+        tenantId: decoded.tenantId ?? '',
+      };
+      req.headers['x-tenant-id'] = req.user.tenantId;
+      next();
+    } catch {
+      return res.status(401).json({
+        success: false,
+        message: 'Session expired. Please re-open the app from your EasyDev dashboard.',
+      });
+    }
+  });
+
+  // ── Transparent stream proxy ─────────────────────────────────────────────
+  // Raw body is preserved so multipart file uploads work correctly.
+  // Only the session cookie is forwarded — all other browser cookies are stripped.
+  r.use(createProxyMiddleware({
+    target,
+    changeOrigin: true,
+    on: {
+      proxyReq(proxyReq, req) {
+        const sessionCookie = extractCookie(req.headers.cookie ?? '', cookieName);
+        proxyReq.setHeader('cookie',         sessionCookie ? `${cookieName}=${sessionCookie}` : '');
+        proxyReq.setHeader('x-tenant-id',    req.user?.tenantId ?? '');
+        proxyReq.setHeader('x-user-id',      req.user?.id       ?? '');
+        proxyReq.setHeader('x-user-role',    req.user?.role     ?? '');
+        if (req.requestId) proxyReq.setHeader('x-request-id',   req.requestId);
+        if (req.ip)        proxyReq.setHeader('x-forwarded-for', req.ip);
+      },
+      error(err, _req, res) {
+        logger.error(`${serviceName} portal proxy error:`, { message: err.message });
+        if (!res.headersSent) {
+          res.status(502).json({
+            success: false,
+            message: `${serviceName} is temporarily unavailable.`,
+          });
+        }
+      },
     },
-  };
+  }));
+
+  return r;
 }
 
-// ---------------------------------------------------------------------------
-// Auth Service  (/api/auth/**, /api/admin/**)
-// ---------------------------------------------------------------------------
+// ─── IAM / Auth Service ───────────────────────────────────────────────────────
+//  PUBLIC        → /auth, /iam/health
+//  AUTHENTICATED → everything else
+// ─────────────────────────────────────────────────────────────────────────────
 
 if (config.auth.serviceUrl) {
-  // IAM global prefix is api/v1/iam — rewrite paths accordingly
-  router.use('/auth',               buildProxy(config.auth.serviceUrl, '/api/v1/iam/auth',          'User Auth Service'));
-  router.use('/profile',            buildProxy(config.auth.serviceUrl, '/api/v1/iam/profile',       'User Auth Service'));
-  router.use('/rbac',               buildProxy(config.auth.serviceUrl, '/api/v1/iam/rbac',          'User Auth Service'));
-  router.use('/users',              buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
-  // Customer dashboard team management proxies to IAM user APIs.
-  // This intentionally sits on /customer/users for backward compatibility.
-  router.use('/customer/users',     buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
-  router.use('/tenants',            buildProxy(config.auth.serviceUrl, '/api/v1/iam/tenants',       'User Auth Service'));
-  router.use('/sessions',           buildProxy(config.auth.serviceUrl, '/api/v1/iam/sessions',      'User Auth Service'));
-  router.use('/iam/health',         buildProxy(config.auth.serviceUrl, '/api/v1/iam/health',        'User Auth Service'));
-  router.use('/iam/logs',           buildProxy(config.auth.serviceUrl, '/api/v1/iam/logs',          'User Auth Service'));
-  router.use('/iam/stats',          buildProxy(config.auth.serviceUrl, '/api/v1/iam/stats',         'User Auth Service'));
-  router.use('/iam/security',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/security',      'User Auth Service'));
-  router.use('/iam/api-keys',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/api-keys',      'User Auth Service'));
-  router.use('/iam/webhooks',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/webhooks',      'User Auth Service'));
-  router.use('/iam/flags',          buildProxy(config.auth.serviceUrl, '/api/v1/iam/feature-flags', 'User Auth Service'));
-  router.use('/iam/apps',           buildProxy(config.auth.serviceUrl, '/api/v1/iam/apps',          'User Auth Service'));
-  router.use('/iam/settings',       buildProxy(config.auth.serviceUrl, '/api/v1/iam/settings',      'User Auth Service'));
-  // Legacy /admin path kept for backward-compatibility but no longer used — remove once all clients updated
-  router.use('/admin',              buildProxy(config.auth.serviceUrl, '/api/v1/iam/users',         'User Auth Service'));
+  const iam = config.auth.serviceUrl;
+
+  // Public
+  router.use('/auth',         buildProxy(iam, '/api/v1/iam/auth',   'IAM'));
+  router.use('/iam/health',   buildProxy(iam, '/api/v1/iam/health', 'IAM'));
+
+  // Authenticated
+  router.use('/profile',       authenticate, buildProxy(iam, '/api/v1/iam/profile',       'IAM'));
+  router.use('/rbac',          authenticate, buildProxy(iam, '/api/v1/iam/rbac',          'IAM'));
+  router.use('/users',         authenticate, buildProxy(iam, '/api/v1/iam/users',         'IAM'));
+  router.use('/customer/users',authenticate, buildProxy(iam, '/api/v1/iam/users',         'IAM'));
+  router.use('/tenants',       authenticate, buildProxy(iam, '/api/v1/iam/tenants',       'IAM'));
+  router.use('/sessions',      authenticate, buildProxy(iam, '/api/v1/iam/sessions',      'IAM'));
+  router.use('/iam/logs',      authenticate, buildProxy(iam, '/api/v1/iam/logs',          'IAM'));
+  router.use('/iam/stats',     authenticate, buildProxy(iam, '/api/v1/iam/stats',         'IAM'));
+  router.use('/iam/security',  authenticate, buildProxy(iam, '/api/v1/iam/security',      'IAM'));
+  router.use('/iam/api-keys',  authenticate, buildProxy(iam, '/api/v1/iam/api-keys',      'IAM'));
+  router.use('/iam/webhooks',  authenticate, buildProxy(iam, '/api/v1/iam/webhooks',      'IAM'));
+  router.use('/iam/flags',     authenticate, buildProxy(iam, '/api/v1/iam/feature-flags', 'IAM'));
+  router.use('/iam/apps',      authenticate, buildProxy(iam, '/api/v1/iam/apps',          'IAM'));
+  router.use('/iam/settings',  authenticate, buildProxy(iam, '/api/v1/iam/settings',      'IAM'));
+  router.use('/admin',         authenticate, buildProxy(iam, '/api/v1/iam/users',         'IAM')); // legacy
 } else {
-  for (const path of ['/auth', '/profile', '/rbac', '/users', '/customer/users', '/tenants', '/sessions',
-                       '/iam/health', '/iam/logs', '/iam/stats', '/iam/security', '/iam/api-keys',
-                       '/iam/webhooks', '/iam/flags', '/iam/apps', '/iam/settings', '/admin']) {
-    router.use(path, serviceUnavailable('User Auth Service'));
+  for (const p of ['/auth', '/iam/health', '/profile', '/rbac', '/users', '/customer/users',
+                   '/tenants', '/sessions', '/iam/logs', '/iam/stats', '/iam/security',
+                   '/iam/api-keys', '/iam/webhooks', '/iam/flags', '/iam/apps', '/iam/settings', '/admin']) {
+    router.use(p, serviceUnavailable('IAM'));
   }
 }
 
-// ---------------------------------------------------------------------------
-// File Upload Service  (/api/files/**)
-// ---------------------------------------------------------------------------
+// ─── File Upload Service ──────────────────────────────────────────────────────
 
 if (config.fileUpload.serviceUrl) {
-  router.use('/files', buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload Service'));
+  router.use('/files', authenticate, buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload'));
 } else {
-  router.use('/files', serviceUnavailable('File Upload Service'));
+  router.use('/files', serviceUnavailable('File Upload'));
 }
 
-// ---------------------------------------------------------------------------
-// AI Communication — Customer Data  (/api/customer/**)
-//
-// All post-login customer dashboard calls are proxied here.
-// Path rewriting:  /customer/business  →  AI Comm /api/v1/business
-//                  /customer/channels  →  AI Comm /api/v1/channels
-//                  /customer/users     →  IAM /api/v1/iam/users (handled above)
-//                  /customer/conversations/stats  →  AI Comm /api/v1/conversations/stats
-//                  /customer/messages/stats       →  AI Comm /api/v1/messages/stats
-//
-// The customer's Bearer token is forwarded transparently — AI Comm validates it.
-// ---------------------------------------------------------------------------
+// ─── AI Communication ─────────────────────────────────────────────────────────
+//  /customer/*             — AUTHENTICATED Bearer  (dashboard)
+//  /communication/admin/*  — AUTHENTICATED Bearer  (admin panel)
+//  /portal/communication/* — cookie-auth portal    (AI Comm standalone frontend)
+// ─────────────────────────────────────────────────────────────────────────────
 
-const communicationProxyTarget = config.communication?.proxyTarget ?? null;
-const communicationProxyPath   = config.communication?.proxyPath   ?? '/api/v1';
+const commTarget = config.communication?.proxyTarget ?? null;
+const commPath   = config.communication?.proxyPath   ?? '/api/v1';
 
-if (communicationProxyTarget) {
-  router.get('/customer/channels/email/providers', async (req, res) => {
-    const response = await apiCall(customerChannelUrl('/channels/email/providers'), {
-      method: 'GET',
-      headers: customerProxyHeaders(req),
-    });
-
-    if (response.error) {
-      return res.status(response.status ?? 502).json(response.data ?? {
-        success: false,
-        message: 'Failed to fetch email provider settings.',
-      });
-    }
-
-    return res.status(response.status ?? 200).json(response.data);
-  });
-
-  router.patch('/customer/channels/email/providers/:providerKey', manualProxyJsonParser, async (req, res) => {
-    const response = await apiCall(customerChannelUrl(`/channels/email/providers/${req.params.providerKey}`), {
-      method: 'PATCH',
-      headers: customerProxyHeaders(req),
-      data: req.body,
-    });
-
-    if (response.error) {
-      return res.status(response.status ?? 502).json(response.data ?? {
-        success: false,
-        message: 'Failed to update email provider settings.',
-      });
-    }
-
-    return res.status(response.status ?? 200).json(response.data);
-  });
-
-  router.get('/customer/channels', async (req, res) => {
-    const response = await apiCall(customerChannelUrl('/channels'), {
-      method: 'GET',
-      headers: customerProxyHeaders(req),
-    });
-
-    if (response.error) {
-      return res.status(response.status ?? 502).json(response.data ?? {
-        success: false,
-        message: 'Failed to fetch customer channels.',
-      });
-    }
-
-    const channels = Array.isArray(response.data)
-      ? response.data
-        .filter((channel) => channel.identifier ?? channel.metadata?.identifier)
-        .map(normalizeCustomerChannel)
-      : [];
-
-    return res.json(channels);
-  });
-
-  router.post('/customer/channels', manualProxyJsonParser, async (req, res) => {
-    const payload = buildCustomerChannelPayload(req.body);
-    if (payload.error) {
-      return res.status(400).json({
-        success: false,
-        message: payload.error,
-      });
-    }
-
-    const response = await apiCall(customerChannelUrl('/channels'), {
-      method: 'POST',
-      headers: customerProxyHeaders(req),
-      data: payload,
-    });
-
-    if (response.error) {
-      return res.status(response.status ?? 502).json(response.data ?? {
-        success: false,
-        message: 'Failed to add customer channel.',
-      });
-    }
-
-    return res.status(response.status ?? 201).json(normalizeCustomerChannel(response.data));
-  });
-
-  router.delete('/customer/channels/:id', async (req, res) => {
-    const response = await apiCall(customerChannelUrl(`/channels/${req.params.id}`), {
-      method: 'DELETE',
-      headers: customerProxyHeaders(req),
-    });
-
-    if (response.error) {
-      return res.status(response.status ?? 502).json(response.data ?? {
-        success: false,
-        message: 'Failed to delete customer channel.',
-      });
-    }
-
-    return res.status(response.status ?? 204).end();
-  });
-
-  router.use('/customer', buildProxy(communicationProxyTarget, communicationProxyPath, 'AI Communication'));
+if (commTarget) {
+  router.use('/customer',            authenticate, buildProxy(commTarget, commPath,                   'AI Communication'));
+  router.use('/communication/admin', authenticate, buildProxy(commTarget, `${commPath}/admin`,        'AI Communication Admin'));
+  router.use('/portal/communication',              buildPortalProxy('ea_comm_session', commTarget,    'AI Communication Portal'));
 } else {
-  router.use('/customer', serviceUnavailable('AI Communication'));
+  router.use('/customer',            serviceUnavailable('AI Communication'));
+  router.use('/communication/admin', serviceUnavailable('AI Communication'));
+  router.use('/portal/communication',serviceUnavailable('AI Communication Portal'));
+}
+
+// ─── Job Agent Service ────────────────────────────────────────────────────────
+//  /job-agent/proxy/*  — AUTHENTICATED Bearer  (dashboard)
+//  /portal/job-agent/* — cookie-auth portal    (Job Agent standalone frontend)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const jobTarget = parseHost(process.env.JOB_AGENT_URL || '');
+const jobPath   = parsePath(process.env.JOB_AGENT_URL || '');
+
+if (jobTarget) {
+  router.use('/job-agent/proxy',  authenticate, buildProxy(jobTarget, jobPath,    'Job Agent'));
+  router.use('/portal/job-agent',              buildPortalProxy('ja_session', jobTarget, 'Job Agent Portal'));
+} else {
+  router.use('/job-agent/proxy',  serviceUnavailable('Job Agent'));
+  router.use('/portal/job-agent', serviceUnavailable('Job Agent Portal'));
 }
 
 export default router;

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * routes/communication.js
  *
  * Provision / manage EasyDev AI Communication Platform accounts.
@@ -9,7 +9,7 @@
  * POST /api/communication/provision
  *   Provision a new AI Communication account.
  *   Requires a valid JWT (authenticate middleware) except in the test/dev
- *   "bypass" mode for direct frontend calls — determined by auth strategy
+ *   "bypass" mode for direct frontend calls â€” determined by auth strategy
  *   in config. See notes inline.
  */
 
@@ -24,26 +24,6 @@ import { authenticate } from '../middleware/auth.js';
 import logger        from '../utils/logger.js';
 
 const router = express.Router();
-
-function getCommunicationApiBase() {
-  const target = config.communication?.proxyTarget;
-  const path = config.communication?.proxyPath;
-
-  if (!target || !path) {
-    throw new AppError('AI Communication service is not available.', 503);
-  }
-
-  return `${target}${path}`;
-}
-
-function getBearerAuthorization(req) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) {
-    throw new AppError('A valid Bearer access token is required.', 401);
-  }
-
-  return auth;
-}
 
 function decodeTenantIdFromBearer(authorizationHeader) {
   if (!authorizationHeader || !authorizationHeader.startsWith('Bearer ')) {
@@ -60,20 +40,20 @@ function decodeTenantIdFromBearer(authorizationHeader) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // POST /api/communication/provision
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Provision an AI Communication account.
  *
  * Body:
- *   name         {string}  required — customer full name
- *   email        {string}  required — customer email
- *   planKey      {string}  required — EasyDev plan key (starter | growth | payg)
- *   paymentId    {string}  optional — Razorpay/Stripe payment ID for audit trail
- *   businessName {string}  optional — company/brand name (defaults to name)
- *   externalId   {string}  optional — external reference ID
+ *   name         {string}  required â€” customer full name
+ *   email        {string}  required â€” customer email
+ *   planKey      {string}  required â€” EasyDev plan key (starter | growth | payg)
+ *   paymentId    {string}  optional â€” Razorpay/Stripe payment ID for audit trail
+ *   businessName {string}  optional â€” company/brand name (defaults to name)
+ *   externalId   {string}  optional â€” external reference ID
  *
  * Returns:
  *   { success, message, data: { loginUrl, userId, businessId, temporaryPassword } }
@@ -145,7 +125,7 @@ router.post('/provision', authenticate, async (req, res, next) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // GET /api/communication/launch?slug=easydev-ai-communication
 // GET /api/communication/launch?applicationId=<uuid-or-publicId>
 //
@@ -153,11 +133,11 @@ router.post('/provision', authenticate, async (req, res, next) => {
 // a signed launch URL to the product's frontend.
 //
 // Caller must supply exactly one of:
-//   ?slug=<kebab-slug>          preferred — stable, no UUID needed
-//   ?applicationId=<id>         fallback  — UUID or publicId from IAM app table
+//   ?slug=<kebab-slug>          preferred â€” stable, no UUID needed
+//   ?applicationId=<id>         fallback  â€” UUID or publicId from IAM app table
 //
 // The product's frontendUrl is stored on its IAM application record and is
-// returned by SSO /generate — no env var required here.
+// returned by SSO /generate â€” no env var required here.
 //
 // Auth strategy:
 //   The EasyDev customer is authenticated against the same IAM service
@@ -168,7 +148,7 @@ router.post('/provision', authenticate, async (req, res, next) => {
 //   No admin JWT / x-on-behalf-of required.
 //
 // Requires:  Authorization: Bearer <IAM access token>
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get('/launch', async (req, res, next) => {
   try {
     const customerJwt = req.headers.authorization;
@@ -183,7 +163,7 @@ router.get('/launch', async (req, res, next) => {
       return next(new AppError('Provide only one of ?slug= or ?applicationId=, not both.', 400));
     }
 
-    // Sanitise — both must be non-empty strings
+    // Sanitise â€” both must be non-empty strings
     const resolvedSlug = typeof slug === 'string' && slug.trim()
       ? slug.trim()
       : (!applicationId && defaultCommunicationSlug ? defaultCommunicationSlug : undefined);
@@ -215,7 +195,7 @@ router.get('/launch', async (req, res, next) => {
           tenantRef: communicationTenantRef,
           error: tenantError?.message,
         });
-        return next(new AppError('SSO launch is misconfigured — unable to resolve the IAM tenant.', 503));
+        return next(new AppError('SSO launch is misconfigured â€” unable to resolve the IAM tenant.', 503));
       }
     }
 
@@ -240,10 +220,10 @@ router.get('/launch', async (req, res, next) => {
     const { token, expiresIn, frontendUrl } = iamRes.data?.data ?? iamRes.data;
     if (!token) throw new AppError('IAM did not return an SSO token.', 502);
 
-    // frontendUrl is stored on the IAM application record — not in env.
+    // frontendUrl is stored on the IAM application record â€” not in env.
     if (!frontendUrl) {
       const identifier = resolvedSlug ?? resolvedAppId;
-      throw new AppError(`SSO launch misconfigured — set frontendUrl on the '${identifier}' application record in IAM.`, 503);
+      throw new AppError(`SSO launch misconfigured â€” set frontendUrl on the '${identifier}' application record in IAM.`, 503);
     }
 
     const launchParams = new URLSearchParams({ token });
@@ -268,222 +248,13 @@ router.get('/launch', async (req, res, next) => {
     const status = err?.response?.status;
     if (status === 401) return next(new AppError('Your session has expired. Please log in again.', 401));
     if (status === 403) return next(new AppError('You do not have access to this application. Ensure your AI Communication subscription is active.', 403));
-    if (status === 404) return next(new AppError('Application not found — please contact support.', 404));
+    if (status === 404) return next(new AppError('Application not found â€” please contact support.', 404));
     logger.error('SSO launch failed', { error: err?.message });
     next(err);
   }
 });
 
-router.get('/admin/providers', async (req, res, next) => {
-  try {
-    const response = await axios.get(`${getCommunicationApiBase()}/admin/providers`, {
-      headers: {
-        Authorization: getBearerAuthorization(req),
-      },
-      timeout: 10_000,
-    });
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to fetch AI Communication providers.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.get('/admin/ai-settings', async (req, res, next) => {
-  try {
-    const response = await axios.get(`${getCommunicationApiBase()}/admin/ai-settings`, {
-      headers: {
-        Authorization: getBearerAuthorization(req),
-      },
-      timeout: 10_000,
-    });
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to fetch AI Communication AI settings.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.patch('/admin/ai-settings', async (req, res, next) => {
-  try {
-    const response = await axios.patch(
-      `${getCommunicationApiBase()}/admin/ai-settings`,
-      req.body,
-      {
-        headers: {
-          Authorization: getBearerAuthorization(req),
-          'Content-Type': 'application/json',
-        },
-        timeout: 10_000,
-      },
-    );
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to update AI Communication AI settings.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.get('/admin/email-provider-settings', async (req, res, next) => {
-  try {
-    const response = await axios.get(`${getCommunicationApiBase()}/admin/email-provider-settings`, {
-      headers: {
-        Authorization: getBearerAuthorization(req),
-      },
-      timeout: 10_000,
-    });
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to fetch AI Communication email provider settings.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.patch('/admin/email-provider-settings/:providerKey', async (req, res, next) => {
-  try {
-    const response = await axios.patch(
-      `${getCommunicationApiBase()}/admin/email-provider-settings/${encodeURIComponent(req.params.providerKey)}`,
-      req.body,
-      {
-        headers: {
-          Authorization: getBearerAuthorization(req),
-          'Content-Type': 'application/json',
-        },
-        timeout: 10_000,
-      },
-    );
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to update AI Communication email provider settings.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.get('/admin/usage', async (req, res, next) => {
-  try {
-    const response = await axios.get(`${getCommunicationApiBase()}/admin/usage`, {
-      headers: {
-        Authorization: getBearerAuthorization(req),
-      },
-      params: req.query,
-      timeout: 15_000,
-    });
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to fetch AI Communication usage analytics.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.get('/admin/reply-stats', async (req, res, next) => {
-  try {
-    const response = await axios.get(`${getCommunicationApiBase()}/admin/reply-stats`, {
-      headers: {
-        Authorization: getBearerAuthorization(req),
-      },
-      params: req.query,
-      timeout: 15_000,
-    });
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to fetch AI Communication reply analytics.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.get('/admin/providers/health', async (req, res, next) => {
-  try {
-    const response = await axios.get(`${getCommunicationApiBase()}/admin/providers/health`, {
-      headers: {
-        Authorization: getBearerAuthorization(req),
-      },
-      timeout: 30_000,
-    });
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to check AI Communication provider health.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.patch('/admin/providers/:id', async (req, res, next) => {
-  try {
-    const response = await axios.patch(
-      `${getCommunicationApiBase()}/admin/providers/${encodeURIComponent(req.params.id)}`,
-      req.body,
-      {
-        headers: {
-          Authorization: getBearerAuthorization(req),
-          'Content-Type': 'application/json',
-        },
-        timeout: 10_000,
-      },
-    );
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to update AI Communication provider settings.',
-      err?.response?.status || 502,
-    ));
-  }
-});
-
-router.patch('/admin/providers/:id/toggle', async (req, res, next) => {
-  try {
-    const response = await axios.patch(
-      `${getCommunicationApiBase()}/admin/providers/${encodeURIComponent(req.params.id)}/toggle`,
-      { isEnabled: req.body?.isEnabled },
-      {
-        headers: {
-          Authorization: getBearerAuthorization(req),
-          'Content-Type': 'application/json',
-        },
-        timeout: 10_000,
-      },
-    );
-
-    return res.status(response.status).json(response.data);
-  } catch (err) {
-    if (err instanceof AppError) return next(err);
-    return next(new AppError(
-      err?.response?.data?.message || 'Failed to update AI Communication provider.',
-      err?.response?.status || 502,
-    ));
-  }
-});
+// /api/communication/admin/* is handled by proxy.js (no jsonParser, createProxyMiddleware)
+// See routes/proxy.js -> router.use('/communication/admin', authenticate, buildProxy(...))
 
 export default router;

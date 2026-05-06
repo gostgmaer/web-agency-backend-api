@@ -200,33 +200,7 @@ router.post("/launch", authenticate, async (req, res, next) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ALL /api/job-agent/proxy/* — authenticated transparent proxy
-// ─────────────────────────────────────────────────────────────────────────────
-router.use("/proxy", authenticate, async (req, res, next) => {
-  try {
-    const apiBase = getJobAgentApiBase();
-    const target = `${apiBase}${req.path}`;
-    const authHeader = getBearerAuthorization(req);
-
-    const response = await axios({
-      method: req.method,
-      url: target,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: authHeader,
-        "x-request-id": req.requestId ?? "",
-      },
-      data: ["POST", "PUT", "PATCH"].includes(req.method) ? req.body : undefined,
-      params: req.query,
-      timeout: 30_000,
-      validateStatus: () => true,
-    });
-
-    res.status(response.status).json(response.data);
-  } catch (err) {
-    next(err);
-  }
-});
+// /api/job-agent/proxy/* is handled by proxy.js (no jsonParser, createProxyMiddleware)
+// See routes/proxy.js → router.use('/job-agent/proxy', authenticate, buildProxy(...))
 
 export default router;
