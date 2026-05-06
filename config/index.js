@@ -212,21 +212,38 @@ export const config = {
 				enterprise:      'payg',
 			},
 		},
-		// Add future products here, e.g.:
-		// 'easydev-analytics': {
-		//   name: 'EasyDev Analytics',
-		//   provisionType: 'generic-webhook',
-		//   apiUrl: process.env.ANALYTICS_API_URL,
-		//   apiKey: process.env.ANALYTICS_API_KEY,
-		//   iamProvisioning: {
-		//     provider: 'shared-iam',
-		//     applicationSlug: process.env.ANALYTICS_IAM_APPLICATION_SLUG,
-		//     tenantSlug: process.env.ANALYTICS_IAM_TENANT_SLUG || process.env.IAM_TENANT_SLUG,
-		//     defaultRole: process.env.ANALYTICS_IAM_DEFAULT_ROLE || 'member',
-		//     bootstrapUser: true,
-		//     requirePasswordChangeOnFirstLogin: true,
-		//   },
-		// },
+		// ─── EasyDev AI Job Agent ───────────────────────────────────────────────
+		'easydev-job-agent': {
+			name:          'EasyDev AI Job Agent',
+			description:   'Automated job search, matching, and application platform',
+			provisionType: 'easydev-job-agent',
+			provisionUrl:  process.env.JOB_AGENT_URL || '',
+			apiKey:        process.env.JOB_AGENT_API_KEY || '',
+			features: [
+				'AI-powered job matching',
+				'Automated resume analysis (ATS score)',
+				'Auto-apply to qualified jobs',
+				'Company trust verification',
+				'Recruiter outreach (Premium)',
+				'Application pipeline CRM',
+			],
+			iamProvisioning: {
+				provider: 'shared-iam',
+				applicationSlug: 'easydev-job-agent',
+				tenantSlug: configuredTenantRef,
+				defaultRole: 'member',
+				bootstrapUser: true,
+				requirePasswordChangeOnFirstLogin: false,
+			},
+			planMap: {
+				free:       'FREE',
+				starter:    'FREE',
+				premium:    'PREMIUM',
+				growth:     'PREMIUM',
+				pro:        'PREMIUM',
+				enterprise: 'PREMIUM',
+			},
+		},
 	},
 
 	logging: {
