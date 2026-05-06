@@ -4,7 +4,7 @@ services:
   communication-backend:
     image: ${COMMUNICATION_IMAGE}
     pull_policy: never
-    container_name: easydev-communication-backend
+    container_name: easydev-ai-communication-backend
     restart: unless-stopped
     env_file:
       - .env.apps

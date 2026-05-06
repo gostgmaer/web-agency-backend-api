@@ -395,8 +395,8 @@ jobs:
             docker compose --env-file .env.core -f compose.core.yml up -d --no-deps web-agency-backend
             wait_for_health easydev-iam-platform
             wait_for_health easydev-payment-service
-            if ! wait_for_health easydev-communication-backend 12 5; then
-              echo "Warning: easydev-communication-backend is not healthy; continuing gateway deploy because communication deploy is managed by a separate pipeline."
+            if ! wait_for_health easydev-ai-communication-backend 12 5; then
+              echo "Warning: easydev-ai-communication-backend is not healthy; continuing gateway deploy because communication deploy is managed by a separate pipeline."
             fi
             wait_for_health easydev-web-agency-backend
 

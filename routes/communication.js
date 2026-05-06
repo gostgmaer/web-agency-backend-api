@@ -77,7 +77,7 @@ router.post('/provision', authenticate, async (req, res, next) => {
   try {
     const { name, email, planKey, paymentId, businessName, externalId } = req.body;
     const requestedPlanKey = typeof planKey === 'string' ? planKey.toLowerCase().trim() : '';
-    const communicationPlanMap = config.products?.['easydev-communication']?.planMap || {};
+    const communicationPlanMap = config.products?.['easydev-ai-communication']?.planMap || {};
     const normalizedPlanKey = communicationPlanMap[requestedPlanKey] || null;
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -110,7 +110,7 @@ router.post('/provision', authenticate, async (req, res, next) => {
       paymentId,
     });
 
-    const result = await provision('easydev-communication', {
+    const result = await provision('easydev-ai-communication', {
       name:         name.trim(),
       email:        normalizedEmail,
       planKey:      normalizedPlanKey,
@@ -130,7 +130,7 @@ router.post('/provision', authenticate, async (req, res, next) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/communication/launch?slug=easydev-communication
+// GET /api/communication/launch?slug=easydev-ai-communication
 // GET /api/communication/launch?applicationId=<uuid-or-publicId>
 //
 // Generates a short-lived (5 min) SSO token via the IAM service and returns
@@ -161,7 +161,7 @@ router.get('/launch', async (req, res, next) => {
     }
 
     const { slug, applicationId } = req.query;
-    const defaultCommunicationSlug = config.products?.['easydev-communication']?.iamProvisioning?.applicationSlug;
+    const defaultCommunicationSlug = config.products?.['easydev-ai-communication']?.iamProvisioning?.applicationSlug;
 
     if (slug && applicationId) {
       return next(new AppError('Provide only one of ?slug= or ?applicationId=, not both.', 400));
@@ -179,7 +179,7 @@ router.get('/launch', async (req, res, next) => {
 
     const iamCfg = config.iam;
     const communicationTenantRef =
-      config.products?.['easydev-communication']?.iamProvisioning?.tenantSlug ||
+      config.products?.['easydev-ai-communication']?.iamProvisioning?.tenantSlug ||
       config.tenant.defaultTenantId;
 
     let resolvedTenantId;

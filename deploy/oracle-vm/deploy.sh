@@ -199,7 +199,7 @@ docker network inspect easydev-services >/dev/null 2>&1 || docker network create
 echo "Tagging backups for rollback"
 backup_running_image easydev-iam-platform
 backup_running_image easydev-payment-service
-backup_running_image easydev-communication-backend
+backup_running_image easydev-ai-communication-backend
 backup_running_image easydev-web-agency-backend
 
 # One-time migration path: if gateway was previously attached to easydev-apps,
@@ -238,7 +238,7 @@ else
 fi
 docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml up -d --remove-orphans communication-backend
 
-wait_for_health easydev-communication-backend
+wait_for_health easydev-ai-communication-backend
 
 if [[ "$ENABLE_EDGE_PROXY" == "true" ]]; then
   docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml up -d edge-proxy
@@ -254,7 +254,7 @@ cleanup_legacy_standalone_stacks
 echo "Cleaning old service images (keeping active + one backup)"
 cleanup_service_repository easydev-iam-platform
 cleanup_service_repository easydev-payment-service
-cleanup_service_repository easydev-communication-backend
+cleanup_service_repository easydev-ai-communication-backend
 cleanup_service_repository easydev-web-agency-backend
 docker image prune -f >/dev/null 2>&1 || true
 

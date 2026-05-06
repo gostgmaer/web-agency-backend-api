@@ -199,16 +199,26 @@ export async function resolveTenantId(tenantRef) {
 
 export async function resolveApplicationId(applicationSlug, tenantId) {
   if (!applicationSlug) return null;
-  const cacheKey = `${tenantId || 'global'}:${applicationSlug}`;
+  const normalizedSlug = String(applicationSlug).trim().toLowerCase();
+  const cacheKey = `${tenantId || 'global'}:${normalizedSlug}`;
   if (resolvedApplicationIds.has(cacheKey)) return resolvedApplicationIds.get(cacheKey);
 
-  const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
-  const applications = unwrapList(await iamRequest(`/apps${query}`));
-  const application = applications.find((entry) => entry.slug === applicationSlug);
+  const tenantScopedQuery = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+  const tenantScopedApplications = unwrapList(await iamRequest(`/apps${tenantScopedQuery}`));
+  let application = tenantScopedApplications.find(
+    (entry) => String(entry?.slug || '').trim().toLowerCase() === normalizedSlug,
+  );
+
+  if (!application && tenantId) {
+    const globalApplications = unwrapList(await iamRequest('/apps'));
+    application = globalApplications.find(
+      (entry) => String(entry?.slug || '').trim().toLowerCase() === normalizedSlug,
+    );
+  }
   const applicationId = application?.internalId || application?.id || application?.publicId || null;
 
   if (!applicationId) {
-    throw new Error(`IAM application with slug "${applicationSlug}" was not found.`);
+    throw new Error(`IAM application with slug "${normalizedSlug}" was not found.`);
   }
 
   resolvedApplicationIds.set(cacheKey, applicationId);
@@ -382,4 +392,24 @@ export async function provisionSharedIamUser({ productId, productName, iamProvis
     temporaryPassword,
     isNewUser,
   };
+}
+
+export async function warmIamProvisioningCache() {
+  const sharedIamProducts = Object.entries(config.products || {}).filter(
+    ([, product]) => product?.iamProvisioning?.provider === 'shared-iam',
+  );
+
+  for (const [productId, product] of sharedIamProducts) {
+    const iamProvisioning = product.iamProvisioning;
+    const tenantId = await resolveTenantId(iamProvisioning.tenantSlug);
+    await resolveApplicationId(iamProvisioning.applicationSlug, tenantId);
+    await resolveRoleId(iamProvisioning.defaultRole || 'member');
+
+    logger.info('Warm IAM provisioning cache ready', {
+      productId,
+      tenantId,
+      applicationSlug: iamProvisioning.applicationSlug,
+      roleName: iamProvisioning.defaultRole || 'member',
+    });
+  }
 }

@@ -37,8 +37,8 @@ export const sendEmail = async (options) => {
 
 		console.log("Email send:", { to: payload.to, template: payload.template });
 
-		const tenantId = config.tenantId;
-		if (!tenantId) throw new Error('TENANT_ID env var is not set — cannot send email without a tenant ID');
+		const tenantId = config.tenantRef;
+		if (!tenantId) throw new Error('TENANT env var is not set — cannot send email without a tenant identifier');
 		// Auto-generate idempotency key matching the pattern used across all services:
 		// {template_lowercase}-{tenantId}-{recipient}
 		const resolvedIdempotencyKey =

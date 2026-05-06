@@ -27,6 +27,7 @@ import platformHealthRoutes from "./routes/platform-health.js";
 
 import logger from "./utils/logger.js";
 import { config } from "./config/index.js";
+import { getRuntimeTenantFallback } from "./utils/tenantFallback.js";
 
 const app = express();
 const isDevelopment = config.app.nodeEnv !== "production";
@@ -262,24 +263,49 @@ app.get("/api/postman-collection", (_req, res) => {
 });
 
 // Routes — owned by this service (body parsing applied inline)
-// Inject default tenant ID before all routes so microservices always receive
-// x-tenant-id even when the client omits it (single-tenant / non-tenanted mode).
-if (config.tenantId) {
-  app.use((req, _res, next) => {
-    if (req.headers['x-tenant-slug'] && !req.headers['x-tenant-id']) {
-      req.headers['x-tenant-id'] = req.headers['x-tenant-slug'];
-    }
+// Gateway owns tenant context forwarding. It may apply configured defaults,
+// but never derives x-tenant-id from a slug value.
+app.use((req, _res, next) => {
+  const runtimeTenant = getRuntimeTenantFallback();
+  const fallbackTenantId = runtimeTenant.tenantId;
+  const fallbackTenantSlug = runtimeTenant.tenantSlug;
+  const incomingTenantId = req.headers['x-tenant-id'];
+  const incomingTenantSlug = req.headers['x-tenant-slug'];
 
-    if (!req.headers['x-tenant-id']) {
-      req.headers['x-tenant-id'] = config.tenantId;
-    }
+  if (
+    incomingTenantId &&
+    fallbackTenantId &&
+    String(incomingTenantId).trim() !== String(fallbackTenantId).trim() &&
+    (!fallbackTenantSlug || String(incomingTenantId).trim() !== String(fallbackTenantSlug).trim())
+  ) {
+    return _res.status(403).json({
+      success: false,
+      message: 'Invalid tenant context for this gateway instance.',
+    });
+  }
 
-    if (!req.headers['x-tenant-slug'] && config.tenantSlug) {
-      req.headers['x-tenant-slug'] = config.tenantSlug;
-    }
-    next();
-  });
-}
+  if (
+    incomingTenantSlug &&
+    fallbackTenantSlug &&
+    String(incomingTenantSlug).trim() !== String(fallbackTenantSlug).trim() &&
+    (!fallbackTenantId || String(incomingTenantSlug).trim() !== String(fallbackTenantId).trim())
+  ) {
+    return _res.status(403).json({
+      success: false,
+      message: 'Invalid tenant context for this gateway instance.',
+    });
+  }
+
+  if (!req.headers['x-tenant-id'] && fallbackTenantId) {
+    req.headers['x-tenant-id'] = fallbackTenantId;
+  }
+
+  if (!req.headers['x-tenant-slug'] && fallbackTenantSlug) {
+    req.headers['x-tenant-slug'] = fallbackTenantSlug;
+  }
+
+  next();
+});
 app.use("/api/newsletter",    jsonParser, urlencodedParser, newsletterRoutes);
 app.use("/api/upload",        jsonParser, urlencodedParser, uploadRoutes);
 app.use("/api/calculator",    jsonParser,                   calculatorRoutes);

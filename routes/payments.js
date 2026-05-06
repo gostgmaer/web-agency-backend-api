@@ -35,6 +35,7 @@ import { provision } from '../utils/productProvisioner.js';
 import { AppError }  from '../utils/errors.js';
 import { apiCall }   from '../lib/axiosCall.js';
 import { authenticate, authorize } from '../middleware/auth.js';
+import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
 
 const router = express.Router();
 
@@ -91,6 +92,7 @@ const PLAN_KEY_BY_PLAN_ID = Object.fromEntries(
 );
 
 const PUBLIC_CHECKOUT_PROVIDERS = ['RAZORPAY', 'CASH'];
+const BLOCKING_SUBSCRIPTION_STATUSES = new Set(['trial', 'active', 'past_due']);
 
 // ─── Pending order store ──────────────────────────────────────────────────────
 // Maps provider orderId / sessionId → { transactionId, attemptId, planKey, customerEmail }
@@ -101,18 +103,79 @@ const PUBLIC_CHECKOUT_PROVIDERS = ['RAZORPAY', 'CASH'];
 // if the verify request arrives after the service restarts during the payment window.
 // See: ../config/index.js config.redis for connection details
 
+let pendingOrdersRedis = null;
 const pendingOrders = new Map();
 const PENDING_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-function storePending(key, value) {
-  // Evict stale entries on every write (lazy GC)
-  for (const [k, v] of pendingOrders.entries()) {
-    if (v.expiresAt < Date.now()) pendingOrders.delete(k);
+if (config.redis?.enabled && config.redis?.url) {
+  try {
+    const { default: Redis } = await import('ioredis');
+    pendingOrdersRedis = new Redis(config.redis.url, {
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+    });
+    pendingOrdersRedis.connect().catch((err) => {
+      logger.warn(`[payments] Redis connect failed, using in-memory pending store: ${err.message}`);
+      pendingOrdersRedis = null;
+    });
+    pendingOrdersRedis.on('error', (err) => {
+      logger.warn(`[payments] Redis error, switching to in-memory pending store: ${err.message}`);
+      pendingOrdersRedis = null;
+    });
+  } catch (err) {
+    logger.warn(`[payments] ioredis unavailable, using in-memory pending store: ${err.message}`);
+    pendingOrdersRedis = null;
   }
-  pendingOrders.set(key, { ...value, expiresAt: Date.now() + PENDING_TTL_MS });
 }
 
-function getPending(key) {
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pendingOrders.entries()) {
+    if (v.expiresAt < now) pendingOrders.delete(k);
+  }
+}, 5 * 60 * 1000).unref();
+
+function pendingStoreKey(key) {
+  return `checkout:pending:${key}`;
+}
+
+async function storePending(key, value) {
+  const payload = { ...value, expiresAt: Date.now() + PENDING_TTL_MS };
+
+  if (pendingOrdersRedis) {
+    try {
+      await pendingOrdersRedis.set(
+        pendingStoreKey(key),
+        JSON.stringify(payload),
+        'PX',
+        PENDING_TTL_MS,
+      );
+      return;
+    } catch (err) {
+      logger.warn(`[payments] Failed to write pending checkout to Redis, using memory fallback: ${err.message}`);
+    }
+  }
+
+  pendingOrders.set(key, payload);
+}
+
+async function getPending(key) {
+  if (pendingOrdersRedis) {
+    try {
+      const raw = await pendingOrdersRedis.get(pendingStoreKey(key));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.expiresAt < Date.now()) {
+        await pendingOrdersRedis.del(pendingStoreKey(key)).catch(() => {});
+        return null;
+      }
+      return parsed;
+    } catch (err) {
+      logger.warn(`[payments] Failed to read pending checkout from Redis, falling back to memory: ${err.message}`);
+    }
+  }
+
   const entry = pendingOrders.get(key);
   if (!entry) return null;
   if (entry.expiresAt < Date.now()) {
@@ -120,6 +183,13 @@ function getPending(key) {
     return null;
   }
   return entry;
+}
+
+async function deletePending(key) {
+  if (pendingOrdersRedis) {
+    await pendingOrdersRedis.del(pendingStoreKey(key)).catch(() => {});
+  }
+  pendingOrders.delete(key);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -131,9 +201,18 @@ const pmUrl = () => {
   return config.payment.serviceUrl;
 };
 
+function resolveEffectiveTenantId(explicitTenantId) {
+  const runtimeTenantId = getRuntimeTenantFallback().tenantId;
+  const tenantId = explicitTenantId || runtimeTenantId || null;
+  if (!tenantId) {
+    throw new AppError('Tenant context is missing. Configure TENANT and restart gateway.', 503);
+  }
+  return tenantId;
+}
+
 /** Service-to-service headers for payment-microservice (API key auth). */
 function pmServiceHeaders(tenantId, userId, userEmail) {
-	const effectiveTenant = tenantId || config.tenantSlug || config.tenantId || 'easydev';
+  const effectiveTenant = resolveEffectiveTenantId(tenantId);
   const headers = {
     'x-api-key':    config.payment?.apiKey || '',
     'x-tenant-id':  effectiveTenant,
@@ -147,7 +226,7 @@ function pmServiceHeaders(tenantId, userId, userEmail) {
 
 /** User JWT passthrough headers for admin calls to payment-microservice. */
 function pmAuthHeaders(bearerToken, tenantId) {
-	const effectiveTenant = tenantId || config.tenantSlug || config.tenantId || 'easydev';
+  const effectiveTenant = resolveEffectiveTenantId(tenantId);
   return {
     'Authorization': bearerToken || '',
     'x-tenant-id':   effectiveTenant,
@@ -191,6 +270,11 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
+function asTrimmedString(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
+
 function buildCheckoutCustomerId(email) {
   return `checkout:${normalizeEmail(email)}`;
 }
@@ -231,6 +315,10 @@ function resolveCheckoutIdentity(req, customerEmail) {
 function mapSubscriptionStatus(status) {
   if (typeof status !== 'string') return 'active';
   return SUBSCRIPTION_STATUS_MAP[status.toUpperCase()] || status.toLowerCase();
+}
+
+function isBlockingProductStatus(status) {
+  return BLOCKING_SUBSCRIPTION_STATUSES.has(String(status || '').toLowerCase());
 }
 
 function toMajorCurrencyUnit(amount, currency = 'INR') {
@@ -284,7 +372,7 @@ function uniqueById(items) {
 }
 
 function hasValidCommunicationApiKey(req) {
-  const expected = config.products?.['easydev-communication']?.apiKey;
+  const expected = config.products?.['easydev-ai-communication']?.apiKey;
   const provided = typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'].trim() : '';
 
   if (!expected || !provided) {
@@ -516,6 +604,130 @@ function normalizeCustomerInvoice(invoice) {
   };
 }
 
+async function ensureNoActiveProductSubscription({ tenantId, customerId, customerEmail, productId }) {
+  const result = await apiCall(
+    `${pmUrl()}/api/v1/subscriptions`,
+    { method: 'GET', headers: pmServiceHeaders(tenantId, customerId, customerEmail) },
+  );
+
+  if (result.error) {
+    logger.error('subscription pre-check failed', {
+      status: result.status,
+      tenantId,
+      customerId,
+      productId,
+    });
+    throw new AppError(result.data?.message || 'Failed to validate existing subscriptions.', result.status || 502);
+  }
+
+  const subscriptions = extractCollection(result.data).items;
+  const existing = subscriptions
+    .map(normalizeCustomerProduct)
+    .find((item) => item.productId === productId && isBlockingProductStatus(item.status));
+
+  if (existing) {
+    throw new AppError(
+      `You already have an active ${existing.productName || productId} subscription.`,
+      409,
+    );
+  }
+}
+
+async function assertVerifiedTransactionIntegrity({ transactionId, tenantId, pending }) {
+  const txResult = await apiCall(
+    `${pmUrl()}/api/v1/payments/${encodeURIComponent(transactionId)}`,
+    { method: 'GET', headers: pmServiceHeaders(tenantId, pending.customerId, pending.customerEmail) },
+  );
+
+  if (txResult.error) {
+    logger.error('transaction integrity check failed: unable to fetch transaction', {
+      transactionId,
+      status: txResult.status,
+    });
+    throw new AppError(txResult.data?.message || 'Failed to validate verified transaction.', txResult.status || 502);
+  }
+
+  const tx = txResult.data?.data ?? txResult.data;
+  const metadata = tx?.metadata && typeof tx.metadata === 'object' ? tx.metadata : {};
+  const expectedPlan = getBillingPlan(pending.planKey);
+  const violations = [];
+
+  if (asTrimmedString(tx?.status).toUpperCase() !== 'SUCCESS') {
+    violations.push(`status=${asTrimmedString(tx?.status) || 'unknown'}`);
+  }
+
+  if (asTrimmedString(tx?.tenantId) !== asTrimmedString(tenantId)) {
+    violations.push('tenantId mismatch');
+  }
+
+  if (asTrimmedString(metadata?.productId) !== asTrimmedString(pending.productId)) {
+    violations.push('productId mismatch');
+  }
+
+  if (normalizePlanKey(metadata?.planKey) !== normalizePlanKey(pending.planKey)) {
+    violations.push('planKey mismatch');
+  }
+
+  if (asTrimmedString(metadata?.planId) !== asTrimmedString(expectedPlan.planId)) {
+    violations.push('planId mismatch');
+  }
+
+  if (
+    pending.customerEmail &&
+    normalizeEmail(metadata?.customerEmail) !== normalizeEmail(pending.customerEmail)
+  ) {
+    violations.push('customerEmail mismatch');
+  }
+
+  if (
+    pending.customerId &&
+    asTrimmedString(metadata?.customerId) !== asTrimmedString(pending.customerId)
+  ) {
+    violations.push('customerId mismatch');
+  }
+
+  if (asTrimmedString(tx?.currency).toUpperCase() !== 'INR') {
+    violations.push('currency mismatch');
+  }
+
+  if (asTrimmedString(tx?.amount) !== asTrimmedString(expectedPlan.INR)) {
+    violations.push('amount mismatch');
+  }
+
+  if (violations.length > 0) {
+    logger.error('transaction integrity violation detected after verify', {
+      transactionId,
+      violations,
+      expected: {
+        tenantId,
+        productId: pending.productId,
+        planKey: pending.planKey,
+        planId: expectedPlan.planId,
+        customerId: pending.customerId,
+        customerEmail: pending.customerEmail,
+        amount: expectedPlan.INR,
+        currency: 'INR',
+      },
+      actual: {
+        tenantId: tx?.tenantId,
+        productId: metadata?.productId,
+        planKey: metadata?.planKey,
+        planId: metadata?.planId,
+        customerId: metadata?.customerId,
+        customerEmail: metadata?.customerEmail,
+        amount: tx?.amount,
+        currency: tx?.currency,
+        status: tx?.status,
+      },
+    });
+
+    throw new AppError(
+      'Payment verification integrity check failed. Please contact support with your order reference.',
+      409,
+    );
+  }
+}
+
 /** Shared post-payment provisioning: provision the product account and respond. */
 async function handlePostPayment(res, { productId, name, email, planKey, paymentId, businessName, externalId }) {
   let provisionResult = null;
@@ -589,9 +801,16 @@ router.post('/initiate', async (req, res, next) => {
     const plan     = getBillingPlan(normalizedPlanKey);
     const orderId  = randomUUID();
     const idempKey = randomUUID();
-    const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
+    const tenantId = resolveEffectiveTenantId(req.headers['x-tenant-id']);
     const checkoutIdentity = resolveCheckoutIdentity(req, customerEmail);
     const customerId = checkoutIdentity.customerId;
+
+    await ensureNoActiveProductSubscription({
+      tenantId,
+      customerId,
+      customerEmail: checkoutIdentity.customerEmail,
+      productId,
+    });
 
     if (!PUBLIC_CHECKOUT_PROVIDERS.includes(p)) {
       throw new AppError(`${p} is not available for public checkout.`, 400);
@@ -640,7 +859,7 @@ router.post('/initiate', async (req, res, next) => {
     }
 
     const refKey = option.orderId || orderId;
-    storePending(refKey, {
+    await storePending(refKey, {
       transactionId: pmData.transactionId,
       attemptId:     option.attemptId,
       productId,
@@ -704,13 +923,29 @@ router.post('/verify', async (req, res, next) => {
       throw new AppError('paymentId and signature are required for Razorpay verification.', 400);
     }
 
-    const pending = getPending(token);
+    const pending = await getPending(token);
     if (!pending) {
       throw new AppError('Payment order not found or has expired. Please restart the checkout.', 404);
     }
 
+    const requestedProductId = typeof req.body?.productId === 'string' ? req.body.productId.trim() : '';
+    const requestedPlanKey = normalizePlanKey(req.body?.planKey);
+    const requestedEmail = typeof email === 'string' ? normalizeEmail(email) : '';
+
+    if (requestedProductId && pending.productId && requestedProductId !== pending.productId) {
+      throw new AppError('Checkout payload mismatch: product cannot be changed after initiation.', 409);
+    }
+
+    if (requestedPlanKey && pending.planKey && requestedPlanKey !== pending.planKey) {
+      throw new AppError('Checkout payload mismatch: plan cannot be changed after initiation.', 409);
+    }
+
+    if (requestedEmail && pending.customerEmail && requestedEmail !== normalizeEmail(pending.customerEmail)) {
+      throw new AppError('Checkout payload mismatch: email does not match initiated order.', 409);
+    }
+
     const { transactionId, attemptId } = pending;
-    const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
+    const tenantId = resolveEffectiveTenantId(req.headers['x-tenant-id']);
 
     // Build provider-specific verify payload
     const verifyData = p === 'RAZORPAY'
@@ -727,16 +962,22 @@ router.post('/verify', async (req, res, next) => {
       throw new AppError(result.data?.message || 'Payment verification failed.', result.status || 502);
     }
 
-    pendingOrders.delete(token);
-    const resolvedPlanKey = normalizePlanKey(planKey) || normalizePlanKey(pending.planKey);
+    await assertVerifiedTransactionIntegrity({
+      transactionId,
+      tenantId,
+      pending,
+    });
+
+    await deletePending(token);
+    const resolvedPlanKey = normalizePlanKey(pending.planKey);
     if (!resolvedPlanKey) {
       throw new AppError('Unable to resolve planKey for verification. Please restart checkout.', 400);
     }
 
     return handlePostPayment(res, {
-      productId:    resolveProductId({ productId: req.body.productId || pending.productId }),
-      name:         name || email,
-      email:        String(email),
+      productId:    resolveProductId({ productId: pending.productId }),
+      name:         name || pending.customerEmail,
+      email:        String(pending.customerEmail || email),
       planKey:      resolvedPlanKey,
       paymentId:    p === 'RAZORPAY' ? paymentId : token,
       businessName,
@@ -1268,7 +1509,7 @@ router.get('/methods', async (req, res, next) => {
       });
     }
 
-    const tenantId = req.headers['x-tenant-id'] || config.tenantId || 'easydev';
+    const tenantId = resolveEffectiveTenantId(req.headers['x-tenant-id']);
     const result   = await apiCall(
       `${pmUrl()}/api/v1/payments/methods`,
       { method: 'GET', headers: pmServiceHeaders(tenantId) },

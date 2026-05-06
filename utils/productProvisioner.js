@@ -133,7 +133,7 @@ export async function provision(productId, data) {
   let result;
 
   switch (productConfig.provisionType) {
-    case 'easydev-communication':
+    case 'easydev-ai-communication':
       result = await _provisionCommunication(productConfig, data);
       break;
 
@@ -161,7 +161,7 @@ export async function provision(productId, data) {
     });
 
     switch (productConfig.provisionType) {
-      case 'easydev-communication':
+      case 'easydev-ai-communication':
         await _linkCommunicationIamUser(productConfig, {
           businessId: result.businessId,
           iamUserId: iamProvisionResult.iamUserId,
@@ -217,7 +217,7 @@ export async function provision(productId, data) {
  * Returns the normalised shape expected by provision():
  *   { success: true, loginUrl, userId, businessId, planType }
  *
- * @param {object} productCfg - config.products['easydev-communication']
+ * @param {object} productCfg - config.products['easydev-ai-communication']
  * @param {object} data       - { name, email, planKey, paymentId?, businessName?, externalId? }
  */
 async function _provisionCommunication(productCfg, data) {

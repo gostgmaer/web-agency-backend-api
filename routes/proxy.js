@@ -3,6 +3,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import { config } from '../config/index.js';
 import { apiCall } from '../lib/axiosCall.js';
 import logger from '../utils/logger.js';
+import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
 
 const router = express.Router();
 const manualProxyJsonParser = express.json({ limit: '1mb' });
@@ -28,9 +29,6 @@ function serviceUnavailable(serviceName) {
  *   → forwarded as /api/auth/login on the target.
  */
 function buildProxy(target, basePath, serviceName) {
-  // Resolved once at startup — safe for single-tenant deployments.
-  const fallbackTenantId = config.tenantId || config.tenantSlug || 'easydev';
-
   return createProxyMiddleware({
     target,
     changeOrigin: true,
@@ -42,7 +40,10 @@ function buildProxy(target, basePath, serviceName) {
        * tenant context without requiring every caller to set the header.
        */
       proxyReq(proxyReq, req) {
-        if (!req.headers['x-tenant-id']) {
+        const runtimeTenant = getRuntimeTenantFallback();
+        const fallbackTenantId = runtimeTenant.tenantId;
+
+        if (!req.headers['x-tenant-id'] && fallbackTenantId) {
           proxyReq.setHeader('x-tenant-id', fallbackTenantId);
         }
       },

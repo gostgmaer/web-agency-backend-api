@@ -31,6 +31,6 @@ check "IAM Health (Public)" "${DOMAIN_SCHEME}://${IAM_PUBLIC_HOST}/api/v1/iam/he
 check "Payment Health (Public)" "${DOMAIN_SCHEME}://${PAYMENT_PUBLIC_HOST}/api/v1/health"
 check_internal_container "IAM Health (Internal)" "easydev-iam-platform" "http://127.0.0.1:3301/api/v1/iam/health"
 check_internal_container "Payment Health (Internal)" "easydev-payment-service" "http://127.0.0.1:3302/api/v1/health"
-check_internal_container "AI Communication Health (Private)" "easydev-communication-backend" "http://127.0.0.1:3303/api/v1/health"
+check_internal_container "AI Communication Health (Private)" "easydev-ai-communication-backend" "http://127.0.0.1:3303/api/v1/health"
 check "Notification Health" "https://notification-service-iota.vercel.app/v1/health"
 check "File Upload Health" "https://file-upload-service-zjtv.onrender.com/health"

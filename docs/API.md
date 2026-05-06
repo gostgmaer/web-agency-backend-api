@@ -270,7 +270,7 @@ x-tenant-id: easydev
 
 {
   "provider": "RAZORPAY",
-  "productId": "easydev-communication",
+  "productId": "easydev-ai-communication",
   "planKey": "growth",
   "customerEmail": "buyer@example.com"
 }
@@ -285,7 +285,7 @@ x-tenant-id: easydev
 
 {
   "provider": "RAZORPAY",
-  "productId": "easydev-communication",
+  "productId": "easydev-ai-communication",
   "token": "order_or_reference_code",
   "paymentId": "pay_123",
   "signature": "razorpay_signature",

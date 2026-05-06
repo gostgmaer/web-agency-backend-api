@@ -32,23 +32,45 @@ export const authenticate = (req, res, next) => {
     // IAM tokens carry `roles: string[]` — take the first entry as the
     // canonical single-role value used by adminAccess / authorize().
     const roleFromArray = Array.isArray(decoded.roles) ? decoded.roles[0] : undefined;
+    const signedTenantSlug =
+      typeof decoded.tenantSlug === 'string' ? decoded.tenantSlug.trim() : '';
+    const headerTenantSlug =
+      typeof req.headers['x-tenant-slug'] === 'string' ? req.headers['x-tenant-slug'].trim() : '';
+
     req.user = {
       id: decoded.sub,
       email: decoded.email,
       role: decoded.role ?? roleFromArray,
       tenantId: decoded.tenantId,
+      tenantDisplayId: signedTenantSlug || headerTenantSlug || undefined,
       sessionId: decoded.sessionId,
     };
 
-    // SECURITY FIX: Validate that user's tenantId matches the x-tenant-id header
-    // (when header is present). This prevents cross-tenant access via header manipulation.
+    // Enforce tenant isolation at the gateway: for authenticated requests,
+    // always trust the verified JWT tenant and override any client header.
     const headerTenantId = req.headers['x-tenant-id'];
-    if (headerTenantId && decoded.tenantId !== headerTenantId) {
-      logger.warn(`Tenant mismatch: JWT tenantId=${decoded.tenantId} does not match header x-tenant-id=${headerTenantId} for user ${decoded.sub}`);
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied: tenant isolation violation'
-      });
+    if (decoded.tenantId) {
+      if (headerTenantId && headerTenantId !== decoded.tenantId) {
+        logger.warn(
+          `Tenant header override: replacing x-tenant-id=${headerTenantId} with JWT tenantId=${decoded.tenantId}` +
+            `${signedTenantSlug ? ` (slug=${signedTenantSlug})` : ''} for user ${decoded.sub}`
+        );
+      }
+      req.headers['x-tenant-id'] = decoded.tenantId;
+    }
+
+    if (signedTenantSlug) {
+      if (headerTenantSlug && headerTenantSlug !== signedTenantSlug) {
+        logger.warn(
+          `Tenant slug override: replacing x-tenant-slug=${headerTenantSlug} with JWT tenantSlug=${signedTenantSlug} for user ${decoded.sub}`
+        );
+      }
+      req.headers['x-tenant-slug'] = signedTenantSlug;
+    }
+
+    // Optional debug-friendly identifier for tracing in downstream logs.
+    if (signedTenantSlug || headerTenantSlug) {
+      req.headers['x-tenant-display-id'] = signedTenantSlug || headerTenantSlug;
     }
 
     next();

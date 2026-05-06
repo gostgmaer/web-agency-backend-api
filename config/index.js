@@ -55,6 +55,8 @@ const isServerless = Boolean(
 	process.env.DISABLE_FILE_LOGGING === "true",
 );
 
+const configuredTenantRef = getRequiredEnv("TENANT");
+
 export const config = {
 	app: {
 		nodeEnv: process.env.NODE_ENV || "development",
@@ -100,33 +102,6 @@ export const config = {
 	},
 	auth: { serviceUrl: authServiceOrigin },
 
-	// ─── Dashboard Configuration ────────────────────────────────────────────
-	dashboard: {
-		url: process.env.DASHBOARD_URL || 'http://localhost:3500/dashboard',
-	},
-
-	// ─── Redis Configuration ────────────────────────────────────────────────
-	redis: {
-		host: process.env.REDIS_HOST || 'localhost',
-		port: parseInt(process.env.REDIS_PORT || '6379', 10),
-		password: process.env.REDIS_PASSWORD || undefined,
-		db: parseInt(process.env.REDIS_DB || '0', 10),
-		ssl: process.env.REDIS_SSL === 'true',
-	},
-
-	// ─── Tenant Configuration ───────────────────────────────────────────────
-	tenant: {
-		default: process.env.DEFAULT_TENANT_ID || '',
-		isolation: process.env.TENANT_ISOLATION_MODE || 'strict',
-	},
-
-	// ─── Performance Configuration ──────────────────────────────────────────
-	performance: {
-		maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE || '20', 10),
-		minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE || '5', 10),
-		requestTimeout: parseInt(process.env.REQUEST_TIMEOUT || '30000', 10),
-	},
-
 	// ─── IAM Service ─────────────────────────────────────────────────────────
 	// Same service as config.auth — AUTH_SERVICE_URL is the single source of truth.
 	// iam.serviceUrl is used for SSO token generation calls.
@@ -157,16 +132,9 @@ export const config = {
 		healthUrl: process.env.NOTIFICATION_SERVICE_HEALTH_URL || 'https://notification-service-iota.vercel.app/v1/health',
 	},
 
-	// Tenant ID — used as a fallback x-tenant-id for all proxied requests.
-	// Required for single-tenant deployments; in multi-tenant mode, each
-	// client passes its own x-tenant-id header and this is not used.
-	tenantId: process.env.TENANT_ID || null,
-	tenantSlug:
-		process.env.TENANT_SLUG ||
-		process.env.TENANT_ID ||
-		process.env.IAM_TENANT_SLUG || // legacy alias
-		process.env.COMMUNICATION_IAM_TENANT_SLUG || // legacy alias
-		null,
+	// Canonical tenant reference used by gateway.
+	// Set only TENANT (slug/displayId/internalId/publicId) in env.
+	tenantRef: configuredTenantRef,
 
 	// ─── Payment Gateways ────────────────────────────────────────────────────
 	// Only the Razorpay public key is needed here — returned to the frontend
@@ -193,7 +161,7 @@ export const config = {
 	// provision URL with the configured API key.
 	//
 	// Supported provisionType values:
-	//   "easydev-communication" — calls POST /onboarding/create-account on the
+	//   "easydev-ai-communication" — calls POST /onboarding/create-account on the
 	//                             AI Communication NestJS backend.
 	//
 	// Optional per-product iamProvisioning block:
@@ -205,13 +173,13 @@ export const config = {
 	//   requirePasswordChangeOnFirstLogin — whether the temporary password must be changed on first login
 	//
 	// Add further products by adding more keys. The product ID is passed in the
-	// checkout request as { productId: "easydev-communication" } and matched here.
+	// checkout request as { productId: "easydev-ai-communication" } and matched here.
 	products: {
 		// EasyDev AI Communication Platform
-		'easydev-communication': {
+		'easydev-ai-communication': {
 			name:          'EasyDev Communication AI',
 			description:   'AI-powered WhatsApp & email automation platform',
-			provisionType: 'easydev-communication',
+			provisionType: 'easydev-ai-communication',
 			provisionUrl:  process.env.COMMUNICATION_URL || (() => {
 				throw new Error("COMMUNICATION_URL environment variable is required");
 			})(),
@@ -226,12 +194,7 @@ export const config = {
 			iamProvisioning: {
 				provider: 'shared-iam',
 				applicationSlug: process.env.IAM_APPLICATION_SLUG || process.env.COMMUNICATION_IAM_APPLICATION_SLUG || 'easydev-ai-communication',
-				tenantSlug:
-					process.env.TENANT_SLUG ||
-					process.env.TENANT_ID ||
-					process.env.COMMUNICATION_IAM_TENANT_SLUG || // legacy alias
-					process.env.IAM_TENANT_SLUG || // legacy alias
-					'easydev',
+				tenantSlug: configuredTenantRef,
 				defaultRole: process.env.COMMUNICATION_IAM_DEFAULT_ROLE || 'member',
 				bootstrapUser: true,
 				requirePasswordChangeOnFirstLogin: true,
@@ -271,6 +234,8 @@ export const config = {
 	},
 
 	performance: {
+		maxPoolSize: parseInt(process.env.DB_MAX_POOL_SIZE || '20', 10),
+		minPoolSize: parseInt(process.env.DB_MIN_POOL_SIZE || '5', 10),
 		clusterMode: process.env.CLUSTER_MODE === "true",
 		requestTimeout: Number(process.env.REQUEST_TIMEOUT) || 30000,
 		shutdownTimeout: Number(process.env.SHUTDOWN_TIMEOUT) || 10000,
@@ -294,12 +259,18 @@ export const config = {
 	// ─── Tenancy (multi-tenant lead scoping) ─────────────────────────────────
 	tenant: {
 		enabled: process.env.TENANCY_ENABLED !== 'false',
-		defaultTenantId: process.env.DEFAULT_TENANT_ID || process.env.TENANT_ID || 'easydev',
+		isolation: process.env.TENANT_ISOLATION_MODE || 'strict',
+		defaultTenantId: configuredTenantRef,
 	},
 
 	// ─── Redis (optional — lead rate-limiter and scheduler lock) ─────────────
 	redis: {
 		enabled: process.env.REDIS_ENABLED === 'true',
+		host: process.env.REDIS_HOST || 'localhost',
+		port: parseInt(process.env.REDIS_PORT || '6379', 10),
+		password: process.env.REDIS_PASSWORD || undefined,
+		db: parseInt(process.env.REDIS_DB || '0', 10),
+		ssl: process.env.REDIS_SSL === 'true',
 		url: process.env.REDIS_URL || (() => {
 			throw new Error("REDIS_URL environment variable is required");
 		})(),
