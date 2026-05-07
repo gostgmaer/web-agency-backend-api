@@ -81,7 +81,7 @@ jobs:
 
   code-quality:
     name: code-quality
-    if: needs.changes.outputs.code_changed == 'true'
+    if: needs.changes.outputs.code_changed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: changes
     steps:
@@ -114,7 +114,7 @@ jobs:
 
   vulnerability:
     name: vulnerability
-    if: needs.changes.outputs.vulnerability_required == 'true' && (needs.code-quality.result == 'success' || needs.code-quality.result == 'skipped')
+    if: (needs.changes.outputs.vulnerability_required == 'true' || github.event_name == 'workflow_dispatch') && (needs.code-quality.result == 'success' || needs.code-quality.result == 'skipped')
     runs-on: ubuntu-latest
     needs: [changes, code-quality]
     steps:
@@ -154,7 +154,7 @@ jobs:
 
   build:
     name: build
-    if: needs.changes.outputs.build_required == 'true' && (needs.vulnerability.result == 'success' || needs.vulnerability.result == 'skipped')
+    if: (needs.changes.outputs.build_required == 'true' || github.event_name == 'workflow_dispatch') && (needs.vulnerability.result == 'success' || needs.vulnerability.result == 'skipped')
     runs-on: ubuntu-latest
     needs: [changes, vulnerability]
     steps:
