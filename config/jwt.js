@@ -14,7 +14,7 @@ function getRequiredAnyEnv(...names) {
 // Downstream services verify with the RSA public key only — never with the private key.
 // Falls back to HS256 shared secret (JWT_SECRET) when no public key is present.
 function resolveJwtPublicKey() {
-  const b64 = process.env.JWT_PUBLIC_KEY || process.env.IAM_JWT_PUBLIC_KEY;
+  const b64 = process.env.JWT_PUBLIC_KEY;
   if (!b64) return null;
   return Buffer.from(b64, 'base64').toString('utf8');
 }

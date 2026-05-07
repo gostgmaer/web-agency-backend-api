@@ -247,8 +247,33 @@ function buildPortalProxy(cookieName, target, serviceName) {
 if (config.auth.serviceUrl) {
   const iam = config.auth.serviceUrl;
 
+  // Inject x-forwarded-base-url so IAM can derive OAuth callback URLs
+  // dynamically from the gateway's public origin — no AUTH_PUBLIC_BASE_URL
+  // env var needed in the IAM service when deployed behind this gateway.
+  function injectForwardedBaseUrl(proxyReq, req) {
+    const proto = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+    const host  = req.headers['x-forwarded-host']  || req.get('host') || 'localhost';
+    proxyReq.setHeader('x-forwarded-base-url', `${proto}://${host}/api/auth`);
+  }
+
   // Public
-  router.use('/auth',         buildProxy(iam, '/api/v1/iam/auth',   'IAM'));
+  router.use('/auth', createProxyMiddleware({
+    target: iam,
+    changeOrigin: true,
+    pathRewrite: (path) => `/api/v1/iam/auth${path}`,
+    on: {
+      proxyReq(proxyReq, req) {
+        const { tenantId } = getRuntimeTenantFallback();
+        if (!req.headers['x-tenant-id'] && tenantId) proxyReq.setHeader('x-tenant-id', tenantId);
+        if (req.requestId) proxyReq.setHeader('x-request-id', req.requestId);
+        injectForwardedBaseUrl(proxyReq, req);
+      },
+      error(err, _req, res) {
+        logger.error('IAM proxy error:', { message: err.message });
+        if (!res.headersSent) res.status(502).json({ success: false, message: 'IAM is currently unavailable.' });
+      },
+    },
+  }));
   router.use('/iam/health',   buildProxy(iam, '/api/v1/iam/health', 'IAM'));
 
   // Authenticated
