@@ -34,6 +34,33 @@ services:
       - apps-internal
       - easydev-services
 
+  job-agent-service:
+    image: ${JOB_AGENT_IMAGE}
+    pull_policy: never
+    container_name: easydev-job-agent-service
+    restart: unless-stopped
+    env_file:
+      - .env.apps
+    environment:
+      NODE_ENV: production
+      PORT: 3306
+      DATABASE_URL: postgresql://${CORE_POSTGRES_USER}:${CORE_POSTGRES_PASSWORD}@postgres-core:3304/${CORE_POSTGRES_DB}?schema=${JOB_AGENT_DB_SCHEMA:-job_agent}
+      REDIS_HOST: redis-core
+      REDIS_PORT: 3305
+      REDIS_URL: redis://redis-core:3305
+      IAM_SERVICE_URL: http://iam-platform:3301
+      EASYDEV_API_URL: http://web-agency-backend:3300/api
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3306/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    mem_limit: 1536m
+    cpus: "1.00"
+    networks:
+      - apps-internal
+      - easydev-services
+
   edge-proxy:
     image: ${EDGE_PROXY_IMAGE:-caddy:2.9-alpine}
     container_name: easydev-edge-proxy
