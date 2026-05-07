@@ -54,6 +54,7 @@ jobs:
             docker:
               - 'Dockerfile'
               - 'deploy/oracle-vm/compose*.yml'
+              - '.github/workflows/docker-build-deploy.yml'
 
       - name: Compute pipeline requirements
         id: compute
