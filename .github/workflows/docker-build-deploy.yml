@@ -200,7 +200,7 @@ jobs:
           exit-code: '1'
 
       - name: Login to GitHub Container Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -208,7 +208,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push image tags to GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GHCR_PACKAGE: ${{ env.GHCR_PACKAGE }}
         run: |
@@ -217,15 +217,21 @@ jobs:
           owner_lower="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           package_lower="$(echo "${GHCR_PACKAGE}" | tr '[:upper:]' '[:lower:]')"
           ghcr_image="ghcr.io/${owner_lower}/${package_lower}"
-          version_tag="build-${GITHUB_RUN_NUMBER}"
 
-          docker tag "${NEW_IMAGE}" "${ghcr_image}:latest"
+          # Derive safe branch slug: refs/heads/feature/foo -> feature-foo
+          branch_slug="$(echo "${GITHUB_REF#refs/heads/}" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
+          version_tag="${branch_slug}-build-${GITHUB_RUN_NUMBER}"
+
           docker tag "${NEW_IMAGE}" "${ghcr_image}:${version_tag}"
-
-          docker push "${ghcr_image}:latest"
           docker push "${ghcr_image}:${version_tag}"
 
-          echo "Published ${ghcr_image}:latest and ${ghcr_image}:${version_tag}"
+          # Only update :latest from main
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            docker tag "${NEW_IMAGE}" "${ghcr_image}:latest"
+            docker push "${ghcr_image}:latest"
+          fi
+
+          echo "Published ${ghcr_image}:${version_tag}"
 
       - name: Trigger infra deploy
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
