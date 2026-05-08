@@ -233,3 +233,26 @@ jobs:
           fi
 
           echo "Published ${ghcr_image}:${version_tag}"
+
+  deploy:
+    name: Deploy gateway to server
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.ORACLE_VM_HOST }}
+          username: ${{ secrets.ORACLE_VM_USER }}
+          key: ${{ secrets.ORACLE_VM_SSH_KEY }}
+          port: ${{ secrets.ORACLE_VM_SSH_PORT }}
+          script: |
+            set -euo pipefail
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
+            docker pull ghcr.io/${{ secrets.GHCR_ORG }}/easydev-gateway:latest
+            docker compose -p easydev-core \
+              -f /home/opc/easydev/stacks/core/docker-compose.production.yml \
+              up -d --no-deps --no-build gateway
+            docker logout ghcr.io
+            echo "gateway deployed"
