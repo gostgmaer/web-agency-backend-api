@@ -245,7 +245,7 @@ jobs:
             # Deploy using service-owned compose
             export GHCR_ORG="${{ secrets.GHCR_ORG }}"
             docker compose -p easydev-gateway \
-              -f /home/opc/easydev/services/gateway/docker-compose.production.yml \
+              -f /home/opc/easydev/stacks/services/gateway/docker-compose.yml \
               up -d --no-build
             docker logout ghcr.io
 
