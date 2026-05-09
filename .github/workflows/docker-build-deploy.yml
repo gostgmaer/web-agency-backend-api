@@ -215,14 +215,38 @@ jobs:
           script: |
             set -euo pipefail
 
+            # Wait for infra dependencies to be healthy before deploying
+            for container in core-pgbouncer core-redis auth-service; do
+              attempts=0
+              until [ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ]; do
+                attempts=$((attempts+1))
+                if [ $attempts -ge 12 ]; then
+                  echo "Timeout: $container is not healthy after 60s"
+                  exit 1
+                fi
+                echo "Waiting for $container to be healthy... ($attempts/12)"
+                sleep 5
+              done
+              echo "$container is healthy"
+            done
+
             # Pull new image
             echo "${{ secrets.PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
             docker pull ghcr.io/${{ secrets.GHCR_ORG }}/easydev-gateway:latest
 
-            # Deploy
-            docker compose -p easydev-core \
-              -f /home/opc/easydev/stacks/core/docker-compose.production.yml \
-              up -d --no-deps --no-build gateway
+            # One-time migration: remove container if it belongs to a different compose project
+            old_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' gateway 2>/dev/null || echo "")
+            if [ -n "$old_project" ] && [ "$old_project" != "easydev-gateway" ]; then
+              echo "Migrating gateway from project '$old_project' to 'easydev-gateway'"
+              docker stop gateway || true
+              docker rm gateway || true
+            fi
+
+            # Deploy using service-owned compose
+            export GHCR_ORG="${{ secrets.GHCR_ORG }}"
+            docker compose -p easydev-gateway \
+              -f /home/opc/easydev/services/gateway/docker-compose.production.yml \
+              up -d --no-build
             docker logout ghcr.io
 
             # Cleanup dangling images

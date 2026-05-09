@@ -1,0 +1,63 @@
+# =============================================================================
+# web-agency-backend-api/docker-compose.production.yml
+#
+# Production compose for the API gateway (web-agency-backend-api).
+# Deployed independently via CI/CD — does NOT own infra (postgres, redis).
+#
+# External networks created by easydev-infra bootstrap-server.sh:
+#   edge            — Traefik edge network (public routing)
+#   core-network    — internal mesh with auth-service, payment-service
+#   product-network — internal mesh with ai-communication, job-agent
+#
+# Server env files (managed by server admin, NOT by CI):
+#   /home/opc/easydev/services/gateway/.env             — compose-level vars (DOMAIN_GATEWAY, GHCR_ORG)
+#   /home/opc/easydev/services/gateway/.env.production  — runtime service env vars
+# =============================================================================
+
+name: easydev-gateway
+
+services:
+  gateway:
+    image: ghcr.io/${GHCR_ORG}/easydev-gateway:latest
+    container_name: gateway
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    expose:
+      - "3000"
+    networks:
+      - edge
+      - core-network
+      - product-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=edge"
+      - "traefik.http.routers.gateway.rule=Host(`${DOMAIN_GATEWAY}`)"
+      - "traefik.http.routers.gateway.entrypoints=websecure"
+      - "traefik.http.routers.gateway.tls=true"
+      - "traefik.http.routers.gateway.tls.certresolver=le"
+      - "traefik.http.routers.gateway.middlewares=security-headers@file"
+      - "traefik.http.services.gateway.loadbalancer.server.port=3000"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.50"
+    healthcheck:
+      test: ["CMD", "node", "-e",
+        "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  edge:
+    external: true
+    name: edge
+  core-network:
+    external: true
+    name: core-network
+  product-network:
+    external: true
+    name: product-network
