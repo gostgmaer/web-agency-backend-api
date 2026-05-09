@@ -236,7 +236,7 @@ jobs:
 
             # Deploy using service-owned compose
             export GHCR_ORG="${{ secrets.GHCR_ORG }}"
-            docker compose -p easydev-core \
+            COMPOSE_IGNORE_ORPHANS=1 docker compose -p easydev-core \
               -f /home/opc/easydev/stacks/services/gateway/docker-compose.yml \
               up -d --no-build
             docker logout ghcr.io
