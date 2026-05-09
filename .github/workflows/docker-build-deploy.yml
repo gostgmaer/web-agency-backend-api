@@ -77,10 +77,11 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --prefer-offline
 
-      # --- Code quality ---
+      # --- Code quality (only when source code changed) ---
       - name: JavaScript syntax check
+        if: needs.changes.outputs.code_changed == 'true' || github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
@@ -88,7 +89,7 @@ jobs:
             node --check "$file"
           done < <(git ls-files '*.js')
 
-      # --- Vulnerability ---
+      # --- Vulnerability (runs whenever the job is triggered) ---
       - name: Dependency audit
         run: pnpm audit --prod --audit-level=critical
 
@@ -192,8 +193,17 @@ jobs:
   deploy:
     name: deploy
     runs-on: ubuntu-latest
-    needs: [build-and-push]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.build-and-push.result == 'success'
+    needs: [changes, quality-and-security, build-and-push]
+    # always() prevents GHA skip-propagation from auto-skipping this job when
+    # quality-and-security or build-and-push was skipped (no code/deps changes).
+    # The explicit guards below ensure we only deploy clean, built images.
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      needs.changes.result == 'success' &&
+      needs.quality-and-security.result != 'failure' &&
+      needs.build-and-push.result == 'success'
     steps:
       - name: Deploy, cleanup, and health check via SSH
         uses: appleboy/ssh-action@v1
