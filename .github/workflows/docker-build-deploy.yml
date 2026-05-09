@@ -230,9 +230,18 @@ jobs:
               echo "$container is healthy"
             done
 
-            # Pull new image
+            # Pull new image (retry up to 3x — guards against transient overlay2 lease errors)
             echo "${{ secrets.PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
-            docker pull ghcr.io/${{ secrets.GHCR_ORG }}/easydev-gateway:latest
+            for attempt in 1 2 3; do
+              docker pull ghcr.io/${{ secrets.GHCR_ORG }}/easydev-gateway:latest && break
+              if [ $attempt -eq 3 ]; then
+                echo "docker pull failed after 3 attempts"
+                exit 1
+              fi
+              echo "Pull attempt $attempt failed, pruning stale image state and retrying in 10s..."
+              docker image prune -f || true
+              sleep 10
+            done
 
             # Deploy using service-owned compose
             export GHCR_ORG="${{ secrets.GHCR_ORG }}"
