@@ -234,17 +234,9 @@ jobs:
             echo "${{ secrets.PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
             docker pull ghcr.io/${{ secrets.GHCR_ORG }}/easydev-gateway:latest
 
-            # One-time migration: remove container if it belongs to a different compose project
-            old_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' gateway 2>/dev/null || echo "")
-            if [ -n "$old_project" ] && [ "$old_project" != "easydev-gateway" ]; then
-              echo "Migrating gateway from project '$old_project' to 'easydev-gateway'"
-              docker stop gateway || true
-              docker rm gateway || true
-            fi
-
             # Deploy using service-owned compose
             export GHCR_ORG="${{ secrets.GHCR_ORG }}"
-            docker compose -p easydev-gateway \
+            docker compose -p easydev-core \
               -f /home/opc/easydev/stacks/services/gateway/docker-compose.yml \
               up -d --no-build
             docker logout ghcr.io
