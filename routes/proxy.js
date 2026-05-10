@@ -24,6 +24,7 @@
  *   PUBLIC
  *     /auth/*                   → IAM /api/v1/iam/auth/*
  *     /iam/health               → IAM /api/v1/iam/health
+ *     /iam/settings/public      → IAM /api/v1/iam/settings/public (branding/login config)
  *
  *   AUTHENTICATED (Bearer token verified at gateway)
  *     /profile/*                → IAM /api/v1/iam/profile/*
@@ -290,12 +291,13 @@ if (config.auth.serviceUrl) {
   router.use('/iam/webhooks',  authenticate, buildProxy(iam, '/api/v1/iam/webhooks',      'IAM'));
   router.use('/iam/flags',     authenticate, buildProxy(iam, '/api/v1/iam/feature-flags', 'IAM'));
   router.use('/iam/apps',      authenticate, buildProxy(iam, '/api/v1/iam/apps',          'IAM'));
+  router.use('/iam/settings/public',          buildProxy(iam, '/api/v1/iam/settings',      'IAM')); // public — no auth
   router.use('/iam/settings',  authenticate, buildProxy(iam, '/api/v1/iam/settings',      'IAM'));
   router.use('/admin',         authenticate, buildProxy(iam, '/api/v1/iam/users',         'IAM')); // legacy
 } else {
   for (const p of ['/auth', '/iam/health', '/profile', '/rbac', '/users', '/customer/users',
                    '/tenants', '/sessions', '/iam/logs', '/iam/stats', '/iam/security',
-                   '/iam/api-keys', '/iam/webhooks', '/iam/flags', '/iam/apps', '/iam/settings', '/admin']) {
+                   '/iam/api-keys', '/iam/webhooks', '/iam/flags', '/iam/apps', '/iam/settings/public', '/iam/settings', '/admin']) {
     router.use(p, serviceUnavailable('IAM'));
   }
 }
