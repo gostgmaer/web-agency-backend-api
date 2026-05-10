@@ -291,7 +291,7 @@ if (config.auth.serviceUrl) {
   router.use('/iam/webhooks',  authenticate, buildProxy(iam, '/api/v1/iam/webhooks',      'IAM'));
   router.use('/iam/flags',     authenticate, buildProxy(iam, '/api/v1/iam/feature-flags', 'IAM'));
   router.use('/iam/apps',      authenticate, buildProxy(iam, '/api/v1/iam/apps',          'IAM'));
-  router.use('/iam/settings/public',          buildProxy(iam, '/api/v1/iam/settings',      'IAM')); // public — no auth
+  router.use('/iam/settings/public',          buildProxy(iam, '/api/v1/iam/settings/public', 'IAM')); // public — no auth
   router.use('/iam/settings',  authenticate, buildProxy(iam, '/api/v1/iam/settings',      'IAM'));
   router.use('/admin',         authenticate, buildProxy(iam, '/api/v1/iam/users',         'IAM')); // legacy
 } else {
