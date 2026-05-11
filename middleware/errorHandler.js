@@ -126,6 +126,8 @@ export const errorHandler = (err, req, res, next) => {
     error = handleJWTError(err);
   } else if (err instanceof SyntaxError && err.status === 400) {
     error = handleSyntaxError(err);
+  } else if (err.message === 'Not allowed by CORS') {
+    error = new AppError('CORS: origin not allowed', 403, 'CORS_ORIGIN_BLOCKED');
   } else if (!(err instanceof AppError)) {
     // Wrap unknown errors
     error = new AppError(
