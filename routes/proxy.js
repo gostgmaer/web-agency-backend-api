@@ -9,7 +9,8 @@
  *     Bearer-auth proxy for dashboard / API routes.
  *     Always injects x-tenant-id.
  *     When authenticate() runs first, also injects x-user-id, x-user-role,
- *     x-session-id, x-request-id from the verified JWT payload.
+ *     x-user-email, x-user-name (if present), x-session-id, x-request-id
+ *     from the verified JWT payload.
  *
  *   buildPortalProxy(cookieName, target, name)
  *     Cookie-auth proxy for standalone product frontends.
@@ -35,7 +36,7 @@
  *     /sessions/*               → IAM /api/v1/iam/sessions/*
  *     /iam/logs|stats|security|api-keys|webhooks|flags|apps|settings/*
  *                               → IAM
- *     /files/*                  → File Upload /api/files/*
+ *     /files/*                  → File Upload /api/files/* (Bearer + x-api-key injected by gateway)
  *     /customer/*               → AI Communication /api/v1/*
  *     /communication/admin/*    → AI Communication /api/v1/admin/*
  *     /job-agent/proxy/*        → Job Agent /api/v1/*
@@ -115,6 +116,8 @@ function buildProxy(target, basePath, serviceName, options = {}) {
         if (req.user) {
           proxyReq.setHeader('x-user-id',    req.user.id        ?? '');
           proxyReq.setHeader('x-user-role',  req.user.role      ?? '');
+          proxyReq.setHeader('x-user-email', req.user.email     ?? '');
+          if (req.user.name) proxyReq.setHeader('x-user-name', req.user.name);
           proxyReq.setHeader('x-session-id', req.user.sessionId ?? '');
         }
         if (req.requestId) proxyReq.setHeader('x-request-id', req.requestId);
@@ -246,6 +249,8 @@ function buildPortalProxy(cookieName, target, serviceName) {
         proxyReq.setHeader('x-tenant-id',    req.user?.tenantId ?? '');
         proxyReq.setHeader('x-user-id',      req.user?.id       ?? '');
         proxyReq.setHeader('x-user-role',    req.user?.role     ?? '');
+        proxyReq.setHeader('x-user-email',   req.user?.email    ?? '');
+        if (req.user?.name) proxyReq.setHeader('x-user-name', req.user.name);
         if (req.requestId) proxyReq.setHeader('x-request-id',   req.requestId);
         if (req.ip)        proxyReq.setHeader('x-forwarded-for', req.ip);
 
@@ -359,14 +364,14 @@ if (config.fileUpload.serviceUrl) {
     logger.warn('FILE_UPLOAD_HMAC_SECRET is not configured; X-Gateway-HMAC will not be sent to downstream services.');
   }
 
-  router.use('/files', buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload', {
+  router.use('/files', authenticate, buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload', {
     onProxyReq(proxyReq) {
-      // File-upload service requireAuth checks x-api-key.
-      // Use the shared HMAC secret as the service API key — both sides must
-      // be configured with the same FILE_UPLOAD_HMAC_SECRET value.
-      if (config.fileUpload.gatewayHmacSecret) {
-        proxyReq.setHeader('x-api-key', config.fileUpload.gatewayHmacSecret);
-      }
+      // Forward only: X-User-Id, X-User-Email, X-User-Role, X-Tenant-Id, X-Gateway-HMAC.
+      proxyReq.removeHeader('x-user-name');
+      proxyReq.removeHeader('x-session-id');
+      proxyReq.removeHeader('x-request-id');
+      proxyReq.removeHeader('authorization');
+      proxyReq.removeHeader('x-gateway-timestamp');
     },
   }));
 } else {
