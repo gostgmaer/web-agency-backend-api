@@ -52,6 +52,17 @@ export function addGatewaySignatureHeaders(
   };
 }
 
+/**
+ * Create an HMAC in the format expected by the file-upload-service.
+ * The file service verifies the payload `userId:userEmail:userRole`
+ * (see file-upload-service/src/middleware/rbac.js verifyGatewaySignature).
+ */
+export function createFileServiceHmac({ userId = 'anonymous', userEmail = '', userRole = 'anonymous', secret } = {}) {
+  if (!secret) return null;
+  const payload = `${String(userId)}:${String(userEmail)}:${String(userRole)}`;
+  return crypto.createHmac('sha256', secret).update(payload).digest('hex');
+}
+
 export function getPathFromUrl(url) {
   if (!url) return '/';
 

@@ -56,11 +56,23 @@ import { JWT_SECRET }            from '../config/jwt.js';
 import logger                    from '../utils/logger.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
 import { authenticate }          from '../middleware/auth.js';
-import { addGatewaySignatureHeaders } from '../utils/gatewayHmac.js';
+import { addGatewaySignatureHeaders, createFileServiceHmac } from '../utils/gatewayHmac.js';
 
 const router = express.Router();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Optional authenticate — validates Bearer token if present, passes through if absent.
+ * Used on routes that serve both public and authenticated callers (e.g. file uploads
+ * from the public contact form AND authenticated dashboard file management).
+ */
+const optionalAuthenticate = (req, res, next) => {
+  if (req.headers.authorization?.startsWith('Bearer ')) {
+    return authenticate(req, res, next);
+  }
+  next();
+};
 
 function serviceUnavailable(serviceName) {
   return (_req, res) => {
@@ -364,9 +376,29 @@ if (config.fileUpload.serviceUrl) {
     logger.warn('FILE_UPLOAD_HMAC_SECRET is not configured; X-Gateway-HMAC will not be sent to downstream services.');
   }
 
-  router.use('/files', authenticate, buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload', {
-    onProxyReq(proxyReq) {
-      // Forward only: X-User-Id, X-User-Email, X-User-Role, X-Tenant-Id, X-Gateway-HMAC.
+  router.use('/files', optionalAuthenticate, buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload', {
+    onProxyReq(proxyReq, req) {
+      // Resolve effective user identity (authenticated or anonymous public caller).
+      const userId    = req.user?.id    || 'anonymous';
+      const userEmail = req.user?.email || '';
+      const userRole  = req.user?.role  || 'anonymous';
+
+      // Inject identity headers — file service reads these from x-user-* (set by tenantMiddleware).
+      proxyReq.setHeader('x-user-id',    userId);
+      proxyReq.setHeader('x-user-role',  userRole);
+      proxyReq.setHeader('x-user-email', userEmail);
+
+      // Override HMAC with the format the file service expects: userId:userEmail:userRole
+      // (file-upload-service/src/middleware/rbac.js verifyGatewaySignature)
+      const hmac = createFileServiceHmac({
+        userId,
+        userEmail,
+        userRole,
+        secret: config.fileUpload?.gatewayHmacSecret,
+      });
+      if (hmac) proxyReq.setHeader('X-Gateway-HMAC', hmac);
+
+      // Strip headers the file service does not need.
       proxyReq.removeHeader('x-user-name');
       proxyReq.removeHeader('x-session-id');
       proxyReq.removeHeader('x-request-id');
