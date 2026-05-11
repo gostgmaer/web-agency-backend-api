@@ -359,7 +359,16 @@ if (config.fileUpload.serviceUrl) {
     logger.warn('FILE_UPLOAD_HMAC_SECRET is not configured; X-Gateway-HMAC will not be sent to downstream services.');
   }
 
-  router.use('/files', buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload'));
+  router.use('/files', buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload', {
+    onProxyReq(proxyReq) {
+      // File-upload service requireAuth checks x-api-key.
+      // Use the shared HMAC secret as the service API key — both sides must
+      // be configured with the same FILE_UPLOAD_HMAC_SECRET value.
+      if (config.fileUpload.gatewayHmacSecret) {
+        proxyReq.setHeader('x-api-key', config.fileUpload.gatewayHmacSecret);
+      }
+    },
+  }));
 } else {
   router.use('/files', serviceUnavailable('File Upload'));
 }
