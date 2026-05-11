@@ -74,6 +74,13 @@ export const config = {
 		isServerless,
 	},
 
+	gateway: {
+		hmacSecret:
+			process.env.FILE_UPLOAD_HMAC_SECRET ||
+			process.env.FILE_UPLOAD_SERVICE_API_KEY ||
+			"",
+	},
+
 	database: { mongoUri: process.env.MONGODB_URI },
 
 	jwt: {
@@ -99,6 +106,10 @@ export const config = {
 		healthUrl:
 			process.env.FILE_UPLOAD_SERVICE_HEALTH_URL ||
 			(fileUploadServiceOrigin ? `${fileUploadServiceOrigin}/health` : ""),
+		gatewayHmacSecret:
+			process.env.FILE_UPLOAD_HMAC_SECRET ||
+			process.env.FILE_UPLOAD_SERVICE_API_KEY ||
+			"",
 	},
 	auth: { serviceUrl: authServiceOrigin },
 

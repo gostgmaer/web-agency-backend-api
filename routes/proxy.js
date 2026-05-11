@@ -55,6 +55,7 @@ import { JWT_SECRET }            from '../config/jwt.js';
 import logger                    from '../utils/logger.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
 import { authenticate }          from '../middleware/auth.js';
+import { addGatewaySignatureHeaders } from '../utils/gatewayHmac.js';
 
 const router = express.Router();
 
@@ -101,7 +102,7 @@ function extractCookie(header, name) {
  * Injects x-tenant-id always.
  * Injects x-user-* when authenticate() has already populated req.user.
  */
-function buildProxy(target, basePath, serviceName) {
+function buildProxy(target, basePath, serviceName, options = {}) {
   return createProxyMiddleware({
     target,
     changeOrigin: true,
@@ -109,6 +110,7 @@ function buildProxy(target, basePath, serviceName) {
     on: {
       proxyReq(proxyReq, req) {
         const { tenantId } = getRuntimeTenantFallback();
+        const effectiveTenantId = String(req.headers['x-tenant-id'] || tenantId || '');
         if (!req.headers['x-tenant-id'] && tenantId) proxyReq.setHeader('x-tenant-id', tenantId);
         if (req.user) {
           proxyReq.setHeader('x-user-id',    req.user.id        ?? '');
@@ -116,6 +118,22 @@ function buildProxy(target, basePath, serviceName) {
           proxyReq.setHeader('x-session-id', req.user.sessionId ?? '');
         }
         if (req.requestId) proxyReq.setHeader('x-request-id', req.requestId);
+
+        const signatureHeaders = addGatewaySignatureHeaders({}, {
+          method: req.method,
+          path: `${basePath}${req.url || ''}`,
+          tenantId: effectiveTenantId,
+          requestId: req.requestId,
+          secret: config.gateway?.hmacSecret,
+        });
+        if (signatureHeaders['X-Gateway-HMAC']) {
+          proxyReq.setHeader('X-Gateway-HMAC', signatureHeaders['X-Gateway-HMAC']);
+          proxyReq.setHeader('X-Gateway-Timestamp', signatureHeaders['X-Gateway-Timestamp']);
+        }
+
+        if (typeof options.onProxyReq === 'function') {
+          options.onProxyReq(proxyReq, req);
+        }
       },
       error(err, _req, res) {
         logger.error(`${serviceName} proxy error:`, { message: err.message });
@@ -167,11 +185,17 @@ function buildPortalProxy(cookieName, target, serviceName) {
         `${target}/api/v1/auth/sso/exchange`,
         req.body ?? {},
         {
-          headers: {
+          headers: addGatewaySignatureHeaders({
             'Content-Type':   'application/json',
             'x-request-id':   req.requestId      ?? '',
             'x-forwarded-for': req.ip             ?? '',
-          },
+          }, {
+            method: 'POST',
+            path: '/api/v1/auth/sso/exchange',
+            tenantId: req.user?.tenantId || req.headers['x-tenant-id'] || '',
+            requestId: req.requestId,
+            secret: config.gateway?.hmacSecret,
+          }),
           timeout: 15_000,
           validateStatus: () => true,
         },
@@ -224,6 +248,18 @@ function buildPortalProxy(cookieName, target, serviceName) {
         proxyReq.setHeader('x-user-role',    req.user?.role     ?? '');
         if (req.requestId) proxyReq.setHeader('x-request-id',   req.requestId);
         if (req.ip)        proxyReq.setHeader('x-forwarded-for', req.ip);
+
+        const signatureHeaders = addGatewaySignatureHeaders({}, {
+          method: req.method,
+          path: req.url || '/',
+          tenantId: req.user?.tenantId || '',
+          requestId: req.requestId,
+          secret: config.gateway?.hmacSecret,
+        });
+        if (signatureHeaders['X-Gateway-HMAC']) {
+          proxyReq.setHeader('X-Gateway-HMAC', signatureHeaders['X-Gateway-HMAC']);
+          proxyReq.setHeader('X-Gateway-Timestamp', signatureHeaders['X-Gateway-Timestamp']);
+        }
       },
       error(err, _req, res) {
         logger.error(`${serviceName} portal proxy error:`, { message: err.message });
@@ -265,8 +301,22 @@ if (config.auth.serviceUrl) {
     on: {
       proxyReq(proxyReq, req) {
         const { tenantId } = getRuntimeTenantFallback();
+        const effectiveTenantId = String(req.headers['x-tenant-id'] || tenantId || '');
         if (!req.headers['x-tenant-id'] && tenantId) proxyReq.setHeader('x-tenant-id', tenantId);
         if (req.requestId) proxyReq.setHeader('x-request-id', req.requestId);
+
+        const signatureHeaders = addGatewaySignatureHeaders({}, {
+          method: req.method,
+          path: `/api/v1/iam/auth${req.url || ''}`,
+          tenantId: effectiveTenantId,
+          requestId: req.requestId,
+          secret: config.gateway?.hmacSecret,
+        });
+        if (signatureHeaders['X-Gateway-HMAC']) {
+          proxyReq.setHeader('X-Gateway-HMAC', signatureHeaders['X-Gateway-HMAC']);
+          proxyReq.setHeader('X-Gateway-Timestamp', signatureHeaders['X-Gateway-Timestamp']);
+        }
+
         injectForwardedBaseUrl(proxyReq, req);
       },
       error(err, _req, res) {
@@ -305,7 +355,11 @@ if (config.auth.serviceUrl) {
 // ─── File Upload Service ──────────────────────────────────────────────────────
 
 if (config.fileUpload.serviceUrl) {
-  router.use('/files', authenticate, buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload'));
+  if (!config.gateway?.hmacSecret) {
+    logger.warn('FILE_UPLOAD_HMAC_SECRET is not configured; X-Gateway-HMAC will not be sent to downstream services.');
+  }
+
+  router.use('/files', buildProxy(config.fileUpload.serviceUrl, '/api/files', 'File Upload'));
 } else {
   router.use('/files', serviceUnavailable('File Upload'));
 }

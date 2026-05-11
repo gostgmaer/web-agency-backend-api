@@ -12,6 +12,7 @@ import express from "express";
 import { config } from "../config/index.js";
 import logger from "../utils/logger.js";
 import mongoose from "mongoose";
+import { addGatewaySignatureHeaders, getPathFromUrl } from "../utils/gatewayHmac.js";
 
 const router = express.Router();
 
@@ -128,9 +129,16 @@ async function pingUrl(url, name) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
+    const signedHeaders = addGatewaySignatureHeaders({}, {
+      method: "GET",
+      path: getPathFromUrl(url),
+      tenantId: "",
+      requestId: "",
+      secret: config.gateway?.hmacSecret,
+    });
     let res;
     try {
-      res = await fetch(url, { signal: controller.signal });
+      res = await fetch(url, { headers: signedHeaders, signal: controller.signal });
     } finally {
       clearTimeout(timer);
     }
@@ -206,7 +214,13 @@ router.get("/", async (req, res, next) => {
         const appsRes = await fetch(
           `${authServiceUrl}/api/v1/iam/apps?limit=100`,
           {
-            headers: { Authorization: authHeader },
+            headers: addGatewaySignatureHeaders({ Authorization: authHeader }, {
+              method: "GET",
+              path: getPathFromUrl(`${authServiceUrl}/api/v1/iam/apps?limit=100`),
+              tenantId: req.headers["x-tenant-id"] || "",
+              requestId: req.requestId,
+              secret: config.gateway?.hmacSecret,
+            }),
             signal: AbortSignal.timeout(10_000),
           },
         );

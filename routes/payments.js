@@ -36,6 +36,7 @@ import { AppError }  from '../utils/errors.js';
 import { apiCall }   from '../lib/axiosCall.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
+import { addGatewaySignatureHeaders, getPathFromUrl } from '../utils/gatewayHmac.js';
 
 const router = express.Router();
 
@@ -1454,12 +1455,19 @@ router.post('/webhooks/razorpay', express.raw({ type: 'application/json' }), asy
   }
 
   try {
+    const webhookUrl = `${pmUrl()}/api/v1/webhooks/razorpay`;
     await fetch(`${pmUrl()}/api/v1/webhooks/razorpay`, {
       method:  'POST',
-      headers: {
+      headers: addGatewaySignatureHeaders({
         'content-type':         'application/json',
         'x-razorpay-signature': req.headers['x-razorpay-signature'] || '',
-      },
+      }, {
+        method: 'POST',
+        path: getPathFromUrl(webhookUrl),
+        tenantId: req.headers['x-tenant-id'] || '',
+        requestId: req.requestId,
+        secret: config.gateway?.hmacSecret,
+      }),
       body:   req.body,
       signal: AbortSignal.timeout(15_000),
     });
@@ -1481,12 +1489,19 @@ router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async
   }
 
   try {
+    const webhookUrl = `${pmUrl()}/api/v1/webhooks/stripe`;
     await fetch(`${pmUrl()}/api/v1/webhooks/stripe`, {
       method:  'POST',
-      headers: {
+      headers: addGatewaySignatureHeaders({
         'content-type':    'application/json',
         'stripe-signature': req.headers['stripe-signature'] || '',
-      },
+      }, {
+        method: 'POST',
+        path: getPathFromUrl(webhookUrl),
+        tenantId: req.headers['x-tenant-id'] || '',
+        requestId: req.requestId,
+        secret: config.gateway?.hmacSecret,
+      }),
       body:   req.body,
       signal: AbortSignal.timeout(15_000),
     });

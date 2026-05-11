@@ -22,6 +22,7 @@ import { AppError }  from '../utils/errors.js';
 import { config }    from '../config/index.js';
 import { authenticate } from '../middleware/auth.js';
 import logger        from '../utils/logger.js';
+import { addGatewaySignatureHeaders, getPathFromUrl } from '../utils/gatewayHmac.js';
 
 const router = express.Router();
 
@@ -209,10 +210,16 @@ router.get('/launch', async (req, res, next) => {
         ...(resolvedTenantId   ? { tenantId: resolvedTenantId }     : {}),
       },
       {
-        headers: {
+        headers: addGatewaySignatureHeaders({
           Authorization: customerJwt,
           'Content-Type': 'application/json',
-        },
+        }, {
+          method: 'POST',
+          path: getPathFromUrl(`${iamCfg.serviceUrl}/api/v1/iam/sso/generate`),
+          tenantId: resolvedTenantId || req.user?.tenantId || req.headers['x-tenant-id'] || '',
+          requestId: req.requestId,
+          secret: config.gateway?.hmacSecret,
+        }),
         timeout: 10_000,
       },
     );

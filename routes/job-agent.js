@@ -17,6 +17,7 @@ import { AppError } from "../utils/errors.js";
 import { config } from "../config/index.js";
 import { authenticate } from "../middleware/auth.js";
 import logger from "../utils/logger.js";
+import { addGatewaySignatureHeaders, getPathFromUrl } from "../utils/gatewayHmac.js";
 
 const router = express.Router();
 
@@ -118,7 +119,13 @@ router.post("/launch", authenticate, async (req, res, next) => {
       `${iamBase}/api/v1/iam/sso/launch`,
       { applicationSlug: "easydev-job-agent" },
       {
-        headers: { Authorization: authHeader },
+        headers: addGatewaySignatureHeaders({ Authorization: authHeader }, {
+          method: "POST",
+          path: getPathFromUrl(`${iamBase}/api/v1/iam/sso/launch`),
+          tenantId: req.user?.tenantId || req.headers["x-tenant-id"] || "",
+          requestId: req.requestId,
+          secret: config.gateway?.hmacSecret,
+        }),
         timeout: 10_000,
       },
     );
@@ -146,7 +153,13 @@ router.post("/launch", authenticate, async (req, res, next) => {
         const subRes = await axios.get(
           `${paymentBase}/api/v1/subscriptions/active`,
           {
-            headers: { Authorization: authHeader },
+            headers: addGatewaySignatureHeaders({ Authorization: authHeader }, {
+              method: "GET",
+              path: getPathFromUrl(`${paymentBase}/api/v1/subscriptions/active`),
+              tenantId: req.user?.tenantId || req.headers["x-tenant-id"] || "",
+              requestId: req.requestId,
+              secret: config.gateway?.hmacSecret,
+            }),
             params: { productId: "easydev-job-agent" },
             timeout: 5_000,
             validateStatus: (s) => s < 500,
@@ -163,7 +176,13 @@ router.post("/launch", authenticate, async (req, res, next) => {
           const meRes = await axios.get(
             `${jobAgentBase}/auth/me`,
             {
-              headers: { Authorization: authHeader },
+              headers: addGatewaySignatureHeaders({ Authorization: authHeader }, {
+                method: "GET",
+                path: getPathFromUrl(`${jobAgentBase}/auth/me`),
+                tenantId: req.user?.tenantId || req.headers["x-tenant-id"] || "",
+                requestId: req.requestId,
+                secret: config.gateway?.hmacSecret,
+              }),
               timeout: 5_000,
               validateStatus: (s) => s < 500,
             },
@@ -177,7 +196,16 @@ router.post("/launch", authenticate, async (req, res, next) => {
               `${jobAgentBase}/admin/sync-subscription`,
               { profileId, tenantId, plan, status },
               {
-                headers: { "x-api-key": jobAgentApiKey, "Content-Type": "application/json" },
+                headers: addGatewaySignatureHeaders({
+                  "x-api-key": jobAgentApiKey,
+                  "Content-Type": "application/json",
+                }, {
+                  method: "POST",
+                  path: getPathFromUrl(`${jobAgentBase}/admin/sync-subscription`),
+                  tenantId,
+                  requestId: req.requestId,
+                  secret: config.gateway?.hmacSecret,
+                }),
                 timeout: 5_000,
                 validateStatus: (s) => s < 500,
               },
