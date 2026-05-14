@@ -1,7 +1,7 @@
 import { config } from "../config/index.js";
 import logger from "./logger.js";
 import axios from "axios";
-const EMAIL_SERVICE_URL = `${config.email.serviceUrl}/v1/email/send`;
+const EMAIL_SERVICE_URL = `${config.email.serviceUrl}/sms/send`;
 const EMAIL_API_KEY = config.emailApiKey || '';
 
 const getSupportEmail = () => {
