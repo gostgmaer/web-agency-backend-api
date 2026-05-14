@@ -1,7 +1,7 @@
 import { config } from "../config/index.js";
 import logger from "./logger.js";
 import axios from "axios";
-const EMAIL_SERVICE_URL = `${config.email.serviceUrl}/sms/send`;
+const EMAIL_SERVICE_URL = `${config.email.serviceUrl}/email/send`;
 const EMAIL_API_KEY = config.emailApiKey || '';
 
 const getSupportEmail = () => {
@@ -89,7 +89,7 @@ export const sendNewsletterSubscriptionConfirmation = async (subscriber) => {
 				name: subscriber.name || subscriber.email,
 				email: subscriber.email,
 				confirmationUrl,
-				companyName: "Web Agency",
+				companyName: APP_NAME,
 			},
 		});
 	} catch (error) {
@@ -112,7 +112,7 @@ export const sendNewsletterWelcomeConfirmed = async (subscriber) => {
 			data: {
 				name: subscriber.name || subscriber.email,
 				email: subscriber.email,
-				companyName: "Web Agency",
+				companyName: APP_NAME,
 				unsubscribeUrl,
 			},
 		});
@@ -136,7 +136,7 @@ export const sendNewsletterResubscribeWelcome = async (subscriber) => {
 			data: {
 				name: subscriber.name || subscriber.email,
 				email: subscriber.email,
-				companyName: "Web Agency",
+				companyName: APP_NAME,
 				unsubscribeUrl,
 			},
 		});
@@ -159,7 +159,7 @@ export const sendNewsletterFarewell = async (subscriber) => {
 			data: {
 				name: subscriber.name || subscriber.email,
 				email: subscriber.email,
-				companyName: "Web Agency",
+				companyName: APP_NAME,
 			},
 		});
 	} catch (error) {
@@ -178,16 +178,16 @@ export const sendAiCommunicationWelcome = async ({ name, email, loginUrl, tempor
 	try {
 		await sendEmail({
 			to: email,
-			templateId: 'USER_CREATED',
+			templateId: 'ADMIN_CREATED_USER',
 			path: extractPath(loginUrl),
 			data: {
-				name: name || email,
+				username: name || email,
 				email,
 				loginUrl,
 				temporaryPassword,
 				planName: planName || 'Pro',
-				companyName: 'EasyDev',
-				appName: 'EasyDev Communication AI',
+				companyName: APP_NAME,
+				createdBy: APP_NAME,
 				supportEmail: getSupportEmail(),
 			},
 		});

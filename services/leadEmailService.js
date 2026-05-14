@@ -21,18 +21,32 @@ const URL   = config.email.serviceUrl;
 const KEY   = config.emailApiKey;
 const ADMIN = config.email.adminEmail;
 const DASH  = config.dashboard.url;
+const TENANT = config.tenantRef;
+const APP_NAME = config.app.name || 'EasyDev';
+const APP_URL  = config.app.frontendUrl;
 
-function _dispatch(to, templateId, data) {
+function _dispatch(to, template, data) {
+  const idempotencyKey = `${template.toLowerCase()}-${TENANT}-${to}`;
   return apiCall(
     `${URL}/email/send`,
-    { method: 'POST', data: { to, templateId, data } },
-    { headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' } }
+    { method: 'POST', data: { to, template, data } },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(KEY ? { 'x-api-key': KEY } : {}),
+        'x-tenant-id': TENANT,
+        'x-app-name': APP_NAME,
+        'x-app-url': APP_URL,
+        'x-path': '/dashboard',
+        'x-idempotency-key': idempotencyKey,
+      },
+    }
   )
     .then((result) => {
-      if (result?.error) logger.warn(`[leadEmail] ${templateId} → ${to} failed: ${result.message}`);
+      if (result?.error) logger.warn(`[leadEmail] ${template} → ${to} failed: ${result.message}`);
     })
     .catch((err) => {
-      logger.error(`[leadEmail] ${templateId} → ${to} threw: ${err.message}`);
+      logger.error(`[leadEmail] ${template} → ${to} threw: ${err.message}`);
     });
 }
 
