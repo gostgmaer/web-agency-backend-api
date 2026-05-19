@@ -52,7 +52,7 @@ import jwt                       from 'jsonwebtoken';
 import rateLimit                 from 'express-rate-limit';
 import axios                     from 'axios';
 import { config }                from '../config/index.js';
-import { JWT_SECRET }            from '../config/jwt.js';
+import { JWT_SECRET, PORTAL_SESSION_SECRET } from '../config/jwt.js';
 import logger                    from '../utils/logger.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
 import { authenticate }          from '../middleware/auth.js';
@@ -231,7 +231,7 @@ function buildPortalProxy(cookieName, target, serviceName) {
       });
     }
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
+      const decoded = jwt.verify(token, PORTAL_SESSION_SECRET, { algorithms: ['HS256'] });
       req.user = {
         id:       decoded.sub,
         email:    decoded.email,
