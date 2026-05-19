@@ -283,6 +283,7 @@ async function createUser({ email, name, businessName, productId, iamProvisionin
     internalId: created?.internalId || created?.id || null,
     publicId: created?.publicId || null,
     temporaryPassword,
+    passwordChangeUrl: created?.passwordChangeUrl ?? null,
     isNewUser: true,
   };
 }

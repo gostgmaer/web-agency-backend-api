@@ -175,17 +175,22 @@ export async function provision(productId, data) {
       ...result,
       iamUserId: iamProvisionResult.iamUserId,
       ...(iamProvisionResult.temporaryPassword ? { temporaryPassword: iamProvisionResult.temporaryPassword } : {}),
+      ...(iamProvisionResult.passwordChangeUrl ? { passwordChangeUrl: iamProvisionResult.passwordChangeUrl } : {}),
     };
   }
 
   // ── Step 3: Post-provision emails (all products) ──────────────────────────
   // Only send credentials email for brand-new IAM users.
   if (productIamProvisioning && iamProvisionResult?.isNewUser && iamProvisionResult.temporaryPassword) {
+    // Prefer the IAM-issued bootstrap-password URL so the user can set their
+    // password directly from the email without needing to know their temp password.
+    // Fall back to the EasyDev login page if the token URL was not returned.
+    const setupUrl = iamProvisionResult.passwordChangeUrl || result.loginUrl;
     sendAdminCreatedUser({
       username:          data.name,
       email:             data.email,
       temporaryPassword: iamProvisionResult.temporaryPassword,
-      loginUrl:          result.loginUrl,
+      loginUrl:          setupUrl,
     }).catch(() => {});
   }
 
