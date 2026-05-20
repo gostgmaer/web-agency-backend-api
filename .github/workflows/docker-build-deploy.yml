@@ -188,15 +188,16 @@ jobs:
           echo "Published ${ghcr_image}:${version_tag}"
 
   # ---------------------------------------------------------------------------
-  # Stage 4: Deploy, cleanup, and health check
+  # Stage 4: Trigger infra deploy
+  # Service CI owns build + image push (stages 1–3).
+  # All deployment orchestration (env generation, compose up, health checks) is
+  # owned by easydev-infra. Firing repository_dispatch keeps deploy logic and
+  # env secrets in one place, preventing partial-env failures on the server.
   # ---------------------------------------------------------------------------
-  deploy:
-    name: deploy
+  trigger-infra-deploy:
+    name: trigger-infra-deploy
     runs-on: ubuntu-latest
     needs: [changes, quality-and-security, build-and-push]
-    # always() prevents GHA skip-propagation from auto-skipping this job when
-    # quality-and-security or build-and-push was skipped (no code/deps changes).
-    # The explicit guards below ensure we only deploy clean, built images.
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
@@ -205,67 +206,21 @@ jobs:
       needs.quality-and-security.result != 'failure' &&
       needs.build-and-push.result == 'success'
     steps:
-      - name: Deploy, cleanup, and health check via SSH
-        uses: appleboy/ssh-action@v1
+      - name: Dispatch deploy-core to easydev-infra
+        uses: actions/github-script@v7
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: 22
+          github-token: ${{ secrets.PAT }}
           script: |
-            set -euo pipefail
-
-            # Wait for infra dependencies to be healthy before deploying
-            for container in core-pgbouncer core-redis auth-service; do
-              attempts=0
-              until [ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" = "healthy" ]; do
-                attempts=$((attempts+1))
-                if [ $attempts -ge 12 ]; then
-                  echo "Timeout: $container is not healthy after 60s"
-                  exit 1
-                fi
-                echo "Waiting for $container to be healthy... ($attempts/12)"
-                sleep 5
-              done
-              echo "$container is healthy"
-            done
-
-            # Pull new image (retry up to 3x — guards against transient overlay2 lease errors)
-            echo "${{ secrets.PAT }}" | docker login ghcr.io -u "${{ secrets.GHCR_USER }}" --password-stdin
-            for attempt in 1 2 3; do
-              docker pull ghcr.io/${{ secrets.GHCR_ORG }}/easydev-gateway:latest && break
-              if [ $attempt -eq 3 ]; then
-                echo "docker pull failed after 3 attempts"
-                exit 1
-              fi
-              echo "Pull attempt $attempt failed, pruning stale image state and retrying in 10s..."
-              docker image prune -f || true
-              sleep 10
-            done
-
-            # Deploy using service-owned compose
-            export GHCR_ORG="${{ secrets.GHCR_ORG }}"
-            COMPOSE_IGNORE_ORPHANS=1 docker compose -p easydev-core \
-              -f /home/opc/easydev/stacks/services/gateway/docker-compose.yml \
-              up -d --no-build
-            docker logout ghcr.io
-
-            # Cleanup dangling images
-            docker image prune -f
-
-            # Health check — poll Docker health status (up to 90 s)
-            for i in $(seq 1 18); do
-              status=$(docker inspect --format '{{.State.Health.Status}}' gateway 2>/dev/null || echo "not-found")
-              if [ "$status" = "healthy" ]; then
-                echo "gateway is healthy"
-                exit 0
-              fi
-              echo "Waiting for gateway to become healthy... ($i/18) [status=$status]"
-              sleep 5
-            done
-            echo "Health check timeout: gateway did not become healthy in 90s"
-            docker logs --tail 50 gateway || true
-            exit 1
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: 'easydev-infra',
+              event_type: 'deploy-core',
+              client_payload: {
+                service: 'gateway',
+                triggered_by: context.sha,
+              },
+            })
+            core.info('Dispatched deploy-core to easydev-infra')
 
   # ---------------------------------------------------------------------------
   # Stage 5: Create GitHub release and git tag
@@ -273,12 +228,12 @@ jobs:
   release:
     name: release
     runs-on: ubuntu-latest
-    needs: [deploy]
+    needs: [trigger-infra-deploy]
     if: |
       always() &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      needs.deploy.result == 'success'
+      needs.trigger-infra-deploy.result == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
