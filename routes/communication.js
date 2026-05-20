@@ -262,6 +262,6 @@ router.get('/launch', async (req, res, next) => {
 });
 
 // /api/communication/admin/* is handled by proxy.js (no jsonParser, createProxyMiddleware)
-// See routes/proxy.js -> router.use('/communication/admin', authenticate, buildProxy(...))
+// See routes/proxy.js → router.use('/comm/admin', authenticate, commProxy('/admin'))
 
 export default router;
