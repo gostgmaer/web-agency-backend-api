@@ -37,13 +37,17 @@
  *     /iam/logs|stats|security|api-keys|webhooks|flags|apps|settings/*
  *                               → IAM
  *     /files/*                  → File Upload /api/files/* (Bearer + x-api-key injected by gateway)
- *     /customer/*               → AI Communication /api/v1/*
- *     /communication/admin/*    → AI Communication /api/v1/admin/*
+ *     /comm/customer/users/*    → IAM /api/v1/iam/users/* (team management)
+ *     /comm/customer/*          → AI Communication /api/v1/*
+ *     /comm/admin/*             → AI Communication /api/v1/admin/*
  *     /job-agent/proxy/*        → Job Agent /api/v1/*
  *
+ *   PUBLIC (no Bearer — OAuth provider redirects)
+ *     /comm/email-accounts/oauth/* → AI Communication /api/v1/email-accounts/oauth/*
+ *
  *   PORTAL (cookie-auth, raw stream — product frontends)
- *     /portal/communication/*   → AI Communication (ea_comm_session cookie)
- *     /portal/job-agent/*       → Job Agent        (ja_session cookie)
+ *     /comm/portal/*            → AI Communication (ea_comm_session cookie)
+ *     /job-agent/portal/*       → Job Agent        (ja_session cookie)
  */
 
 import express                  from 'express';
@@ -411,38 +415,59 @@ if (config.fileUpload.serviceUrl) {
 }
 
 // ─── AI Communication ─────────────────────────────────────────────────────────
-//  /customer/*             — AUTHENTICATED Bearer  (dashboard)
-//  /communication/admin/*  — AUTHENTICATED Bearer  (admin panel)
-//  /portal/communication/* — cookie-auth portal    (AI Comm standalone frontend)
+//  All routes share the /comm prefix:
+//  /comm/email-accounts/oauth/* — PUBLIC (OAuth redirect, no Bearer)
+//  /comm/admin/*                — AUTHENTICATED Bearer  (admin panel)
+//  /comm/portal/*               — cookie-auth portal    (AI Comm standalone frontend)
+//  /comm/customer/users/*       — AUTHENTICATED Bearer  (team management → IAM)
+//  /comm/customer/*             — AUTHENTICATED Bearer  (EasyDev dashboard → AI Comm)
+//  Adding a new route: router.use('/comm/something', authenticate, commProxy('/something'))
 // ─────────────────────────────────────────────────────────────────────────────
 
 const commTarget = config.communication?.proxyTarget ?? null;
 const commPath   = config.communication?.proxyPath   ?? '/api/v1';
 
-if (commTarget) {
-  router.use('/customer',            authenticate, buildProxy(commTarget, commPath,                   'AI Communication'));
-  router.use('/communication/admin', authenticate, buildProxy(commTarget, `${commPath}/admin`,        'AI Communication Admin'));
-  router.use('/portal/communication',              buildPortalProxy('ea_comm_session', commTarget,    'AI Communication Portal'));
-} else {
-  router.use('/customer',            serviceUnavailable('AI Communication'));
-  router.use('/communication/admin', serviceUnavailable('AI Communication'));
-  router.use('/portal/communication',serviceUnavailable('AI Communication Portal'));
-}
+// Returns a proxy to the AI Comm backend at the given sub-path, or a 503
+// middleware when the service is not configured — no if/else at each route.
+const commProxy       = (subPath = '', label = 'AI Communication') =>
+  commTarget
+    ? buildProxy(commTarget, `${commPath}${subPath}`, label)
+    : serviceUnavailable(label);
+
+const commPortalProxy = () =>
+  commTarget
+    ? buildPortalProxy('ea_comm_session', commTarget, 'AI Communication Portal')
+    : serviceUnavailable('AI Communication Portal');
+
+// Specific sub-paths registered BEFORE the broader /comm/customer catch-all.
+router.use('/comm/email-accounts/oauth', commProxy('/email-accounts/oauth', 'AI Communication OAuth'));
+router.use('/comm/admin',          authenticate, commProxy('/admin', 'AI Communication Admin'));
+router.use('/comm/portal',                       commPortalProxy());
+// Team management → IAM (must sit before the /comm/customer catch-all).
+router.use('/comm/customer/users', authenticate, buildProxy(iam, '/api/v1/iam/users', 'IAM'));
+router.use('/comm/customer',       authenticate, commProxy());
 
 // ─── Job Agent Service ────────────────────────────────────────────────────────
-//  /job-agent/proxy/*  — AUTHENTICATED Bearer  (dashboard)
-//  /portal/job-agent/* — cookie-auth portal    (Job Agent standalone frontend)
+//  All routes share the /job-agent prefix:
+//  /job-agent/portal/*  — cookie-auth portal    (Job Agent standalone frontend)
+//  /job-agent/proxy/*   — AUTHENTICATED Bearer  (EasyDev dashboard → Job Agent)
+//  Adding a new route: router.use('/job-agent/something', authenticate, jobProxy('/something'))
 // ─────────────────────────────────────────────────────────────────────────────
 
 const jobTarget = parseHost(process.env.JOB_AGENT_URL || '');
 const jobPath   = parsePath(process.env.JOB_AGENT_URL || '');
 
-if (jobTarget) {
-  router.use('/job-agent/proxy',  authenticate, buildProxy(jobTarget, jobPath,    'Job Agent'));
-  router.use('/portal/job-agent',              buildPortalProxy('ja_session', jobTarget, 'Job Agent Portal'));
-} else {
-  router.use('/job-agent/proxy',  serviceUnavailable('Job Agent'));
-  router.use('/portal/job-agent', serviceUnavailable('Job Agent Portal'));
-}
+const jobProxy       = (subPath = '', label = 'Job Agent') =>
+  jobTarget
+    ? buildProxy(jobTarget, `${jobPath}${subPath}`, label)
+    : serviceUnavailable(label);
+
+const jobPortalProxy = () =>
+  jobTarget
+    ? buildPortalProxy('ja_session', jobTarget, 'Job Agent Portal')
+    : serviceUnavailable('Job Agent Portal');
+
+router.use('/job-agent/portal', jobPortalProxy());
+router.use('/job-agent/proxy',  authenticate, jobProxy());
 
 export default router;
