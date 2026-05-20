@@ -444,7 +444,10 @@ router.use('/comm/email-accounts/oauth', commProxy('/email-accounts/oauth', 'AI 
 router.use('/comm/admin',          authenticate, commProxy('/admin', 'AI Communication Admin'));
 router.use('/comm/portal',                       commPortalProxy());
 // Team management → IAM (must sit before the /comm/customer catch-all).
-router.use('/comm/customer/users', authenticate, buildProxy(iam, '/api/v1/iam/users', 'IAM'));
+router.use('/comm/customer/users', authenticate,
+  config.auth.serviceUrl
+    ? buildProxy(config.auth.serviceUrl, '/api/v1/iam/users', 'IAM')
+    : serviceUnavailable('IAM'));
 router.use('/comm/customer',       authenticate, commProxy());
 
 // ─── Job Agent Service ────────────────────────────────────────────────────────
