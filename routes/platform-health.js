@@ -199,14 +199,10 @@ router.get("/", async (req, res, next) => {
       services.push(await pingUrl(fileUploadHealthUrl, "File Upload Service"));
     }
 
-    // ── 5. AI Communication backend ────────────────────────────────────────
-    const communicationTarget = config.communication?.proxyTarget;
-    const communicationPath = config.communication?.proxyPath;
-    if (communicationTarget && communicationPath) {
-      services.push(await pingUrl(`${communicationTarget}${communicationPath}/health`, "AI Communication Service"));
-    }
-
-    // ── 6. Product applications (requires forwarded auth token) ────────────
+    // ── 5. Product applications (requires forwarded auth token) ────────────
+    // AI Communication belongs here as a product application when IAM returns
+    // it with a healthCheckUrl. Keep the service list reserved for shared
+    // platform services.
     const products = [];
     const authHeader = req.headers["authorization"];
     if (authHeader && authServiceUrl) {

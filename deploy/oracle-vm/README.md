@@ -98,7 +98,7 @@ chmod +x deploy.sh check-health.sh
 ./check-health.sh
 ```
 
-`/api/platform-health` on gateway includes IAM, Payment, AI Communication, Notification, and File Upload checks.
+`/api/platform-health` on gateway includes shared service checks for IAM, Payment, Notification, and File Upload, plus product application health such as AI Communication.
 
 ## Required DNS
 
