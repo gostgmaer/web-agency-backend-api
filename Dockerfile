@@ -1,6 +1,12 @@
-﻿FROM node:20-alpine
+﻿# ═══════════════════════════════════════════════════════════════════════════
+# Gateway — web-agency-backend-api
+#
+# Cross-compilation: builder runs on CI-native arch (x86_64) to avoid
+# QEMU crashes during pnpm install.  Runner stage targets ARM64.
+# No native modules in this service — deps are arch-independent JS.
+# ═══════════════════════════════════════════════════════════════════════════
 
-# No native modules in this service — no build tools needed
+FROM --platform=$BUILDPLATFORM node:20-alpine AS builder
 
 # Enable corepack (ships with Node 16.10+) and activate pnpm@10.
 # corepack enable creates shims; corepack prepare downloads + pins the version.
@@ -20,6 +26,15 @@ RUN pnpm install --prod
 
 # Copy application source (node_modules excluded via .dockerignore)
 COPY . .
+
+
+# ── Production runner (target platform) ──────────────────────────────────────
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+# No native modules — copy everything from builder (JS-only deps are portable)
+COPY --from=builder /app ./
 
 # Runtime does not need package managers; remove them to reduce attack surface
 # and avoid npm/corepack/pnpm node-pkg CVEs in image scans.
