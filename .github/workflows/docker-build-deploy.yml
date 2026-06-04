@@ -67,7 +67,7 @@ jobs:
   # ---------------------------------------------------------------------------
   quality-and-security:
     name: quality-and-security
-    if: needs.changes.outputs.code_changed == 'true' || needs.changes.outputs.dependencies_changed == 'true' || (github.event_name == 'workflow_dispatch' && env.MANUAL_RUN_MODE != 'deploy-only')
+    if: needs.changes.outputs.code_changed == 'true' || needs.changes.outputs.dependencies_changed == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode != 'deploy-only')
     runs-on: ubuntu-latest
     needs: changes
     steps:
@@ -127,7 +127,7 @@ jobs:
       always() &&
       needs.changes.result == 'success' &&
       (needs.quality-and-security.result == 'success' || needs.quality-and-security.result == 'skipped') &&
-      (github.event_name != 'workflow_dispatch' || env.MANUAL_RUN_MODE != 'deploy-only')
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_mode != 'deploy-only')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -219,9 +219,9 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.changes.result == 'success' &&
       needs.quality-and-security.result != 'failure' &&
-      (github.event_name != 'workflow_dispatch' || env.MANUAL_RUN_MODE != 'build-only') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.run_mode != 'build-only') &&
       (
-        (github.event_name == 'workflow_dispatch' && env.MANUAL_RUN_MODE == 'deploy-only') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.run_mode == 'deploy-only') ||
         needs.build-and-push.result == 'success'
       )
     steps:
