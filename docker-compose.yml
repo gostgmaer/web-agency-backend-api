@@ -1,12 +1,30 @@
 version: "3.9"
 
-# Local gateway compose.
-# Requires easydev-net to be running with:
-#   - iam-platform (IAM)  at iam-platform:3304
-#   - payment_app         at payment_app:3302
-#   - communication-backend at communication-backend:3000
-#   - job-agent-service   at job-agent-service:3306
-#   - redis               at redis:6379
+# =============================================================================
+# Local gateway compose (standalone dev).
+#
+# Works with TWO infrastructure setups:
+#
+# ── Option A: easydev-infra local stack (default) ────────────────────────────
+#   cd easydev-infra && docker compose -f docker-compose.local.yml up -d
+#   cd web-agency-backend-api && docker compose up --build
+#
+#   Internal DNS (infra local stack container names):
+#     auth-service:3000                          — IAM
+#     payment-service:3000                       — Payment
+#     ai-automation-communication-service:3000   — AI Communication
+#     job-agent-service:3000                     — Job Agent
+#     core-redis:6379                            — Redis
+#
+# ── Option B: easydev monolith stack ─────────────────────────────────────────
+#   cd easydev && docker compose --profile backend up -d
+#   cd web-agency-backend-api && \
+#     AUTH_SERVICE_URL=http://easydev-auth-service:3304 \
+#     PAYMENT_SERVICE_URL=http://easydev-payment:3302 \
+#     COMMUNICATION_SERVICE_URL=http://easydev-ai-communication-backend:3303 \
+#     REDIS_URL=redis://easydev-redis:6379 \
+#     docker compose up --build
+# =============================================================================
 
 services:
   app:
@@ -18,22 +36,33 @@ services:
     env_file: .env
     environment:
       NODE_ENV: development
-      PORT: 3301
-      # Override localhost URLs with Docker DNS
-      AUTH_SERVICE_URL: http://iam-platform:3304
-      PAYMENT_SERVICE_URL: http://payment_app:3302
-      COMMUNICATION_SERVICE_URL: http://communication-backend:3000
-      COMMUNICATION_URL: http://communication-backend:3000/api/v1
-      JOB_AGENT_URL: http://job-agent-service:3306/api/v1
-      REDIS_URL: redis://redis:6379
+      PORT: ${PORT:-3000}
+      # Override localhost URLs with Docker DNS — defaults target infra local stack
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:3000}
+      PAYMENT_SERVICE_URL: ${PAYMENT_SERVICE_URL:-http://payment-service:3000}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL:-http://ai-automation-communication-service:3000}
+      COMMUNICATION_URL: ${COMMUNICATION_URL:-http://ai-automation-communication-service:3000/api/v1}
+      JOB_AGENT_URL: ${JOB_AGENT_URL:-http://job-agent-service:3000/api/v1}
+      REDIS_URL: ${REDIS_URL:-redis://core-redis:6379}
     ports:
-      - "3301:3301"
+      - "3301:${PORT:-3000}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:${PORT:-3000}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - gateway-net
-      - easydev-net
+      - core-network
+      - product-network
 
 networks:
   gateway-net:
     driver: bridge
-  easydev-net:
+  core-network:
     external: true
+    name: core-network
+  product-network:
+    external: true
+    name: product-network
