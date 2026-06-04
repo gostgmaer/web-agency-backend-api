@@ -1,0 +1,39 @@
+version: "3.9"
+
+# Local gateway compose.
+# Requires easydev-net to be running with:
+#   - iam-platform (IAM)  at iam-platform:3304
+#   - payment_app         at payment_app:3302
+#   - communication-backend at communication-backend:3000
+#   - job-agent-service   at job-agent-service:3306
+#   - redis               at redis:6379
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: development
+      PORT: 3301
+      # Override localhost URLs with Docker DNS
+      AUTH_SERVICE_URL: http://iam-platform:3304
+      PAYMENT_SERVICE_URL: http://payment_app:3302
+      COMMUNICATION_SERVICE_URL: http://communication-backend:3000
+      COMMUNICATION_URL: http://communication-backend:3000/api/v1
+      JOB_AGENT_URL: http://job-agent-service:3306/api/v1
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3301:3301"
+    networks:
+      - gateway-net
+      - easydev-net
+
+networks:
+  gateway-net:
+    driver: bridge
+  easydev-net:
+    external: true
