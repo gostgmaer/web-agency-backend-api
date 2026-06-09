@@ -54,12 +54,29 @@ jobs:
               fi
             done
 
+            mkdir -p "$HOME/.docker"
+            if [ ! -f "$HOME/.docker/config.json" ]; then
+              printf '%s\n' '{"credsStore":""}' > "$HOME/.docker/config.json"
+            fi
+
             echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             docker compose -p easydev-core -f stacks/core/docker-compose.yml pull
             docker compose -p easydev-core -f stacks/core/docker-compose.yml up -d --remove-orphans
 
             docker compose -p easydev-product -f stacks/product/docker-compose.yml pull
+
+            COMM_IMAGE="$(docker compose -p easydev-product -f stacks/product/docker-compose.yml images -q ai-automation-communication-service | head -n 1)"
+            if [ -n "$COMM_IMAGE" ]; then
+              echo "Running AI Communication schema sync before service start"
+              docker run --rm \
+                --env-file env/.env.shared \
+                --env-file env/.env.ai-automation-communication \
+                --network easydev-net \
+                "$COMM_IMAGE" \
+                sh -lc 'if [ -f scripts/sync-schema.mjs ]; then node scripts/sync-schema.mjs; else echo "sync-schema.mjs missing in image"; exit 1; fi'
+            fi
+
             docker compose -p easydev-product -f stacks/product/docker-compose.yml up -d --remove-orphans
 
             docker logout ghcr.io

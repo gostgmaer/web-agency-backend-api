@@ -56,6 +56,7 @@ import jwt                       from 'jsonwebtoken';
 import rateLimit                 from 'express-rate-limit';
 import axios                     from 'axios';
 import { JWT_SECRET, PORTAL_SESSION_SECRET, JWT_ALGORITHM } from '../config/jwt.js';
+import { config }                  from '../config/index.js';
 import logger                    from '../utils/logger.js';
 import { RedisRateLimitStore }   from '../utils/redisRateLimitStore.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';

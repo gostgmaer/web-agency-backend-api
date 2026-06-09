@@ -2,9 +2,12 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-function resolveServiceOrigin(rawUrl, fallback = "") {
+function resolveServiceOrigin(rawUrl, fallback = "", envName = "") {
 	if (!rawUrl && !fallback) {
-		throw new Error("Service URL is required (no fallback allowed)");
+		const msg = envName ? 
+			`${envName} environment variable is required (no fallback allowed)` :
+			"Service URL is required (no fallback allowed)";
+		throw new Error(msg);
 	}
 	const candidate = String(rawUrl || fallback || "").trim();
 	if (!candidate) {
@@ -41,10 +44,11 @@ function getFirstDefinedEnv(...names) {
 	return "";
 }
 
-const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL);
+const authServiceOrigin = resolveServiceOrigin(process.env.AUTH_SERVICE_URL, "", "AUTH_SERVICE_URL");
 const fileUploadServiceOrigin = resolveServiceOrigin(
 	process.env.FILE_UPLOAD_SERVICE_URL,
 	"https://file-upload-service-zjtv.onrender.com",
+	"FILE_UPLOAD_SERVICE_URL",
 );
 
 const isServerless = Boolean(

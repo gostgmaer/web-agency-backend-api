@@ -236,6 +236,16 @@ if [[ "$SKIP_PULL" != "true" ]]; then
 else
   echo "Skipping registry pulls for app project (SKIP_PULL=true)"
 fi
+
+echo "Synchronizing AI Communication database schema before service start"
+docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml run --rm --no-deps communication-backend sh -lc '
+  if [ -f scripts/sync-schema.mjs ]; then
+    node scripts/sync-schema.mjs
+  else
+    echo "sync-schema.mjs not found in image — relying on container entrypoint"
+  fi
+' || echo "WARNING: pre-start schema sync failed; continuing with container entrypoint"
+
 docker compose --env-file "$CORE_ENV_FILE" --env-file "$APPS_ENV_FILE" -f compose.apps.yml up -d --remove-orphans communication-backend
 
 wait_for_health easydev-ai-communication-backend
