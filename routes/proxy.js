@@ -181,6 +181,19 @@ function buildProxy(target, basePath, serviceName, options = {}) {
           options.onProxyReq(proxyReq, req);
         }
       },
+      proxyRes(proxyRes, _req, res) {
+        res.setHeader(
+          'Access-Control-Expose-Headers',
+          [
+            'X-Request-ID',
+            'x-request-id',
+            'request-id',
+            'x-rtb-fingerprint-id',
+            'X-Gateway-HMAC',
+            'X-Gateway-Timestamp',
+          ].join(', '),
+        );
+      },
       error(err, _req, res) {
         logger.error(`${serviceName} proxy error:`, { message: err.message });
         if (!res.headersSent) {

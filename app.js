@@ -213,6 +213,21 @@ app.use(
 );
 app.options("*", cors(corsOptions));
 
+app.use((req, res, next) => {
+  res.setHeader(
+    'Access-Control-Expose-Headers',
+    [
+      'X-Request-ID',
+      'x-request-id',
+      'request-id',
+      'x-rtb-fingerprint-id',
+      'X-Gateway-HMAC',
+      'X-Gateway-Timestamp',
+    ].join(', '),
+  );
+  next();
+});
+
 // Apply global rate limiter
 app.use(limiter);
 
