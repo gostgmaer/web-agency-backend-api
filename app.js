@@ -198,6 +198,14 @@ const corsOptions = {
     "x-api-key",
     "X-Api-Key",
   ],
+  exposedHeaders: [
+    "X-Request-ID",
+    "x-request-id",
+    "request-id",
+    "x-rtb-fingerprint-id",
+    "X-Gateway-HMAC",
+    "X-Gateway-Timestamp",
+  ],
 };
 
 app.use(
