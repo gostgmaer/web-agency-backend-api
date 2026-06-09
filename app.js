@@ -190,6 +190,7 @@ const corsOptions = {
     "Content-Type",
     "Authorization",
     "X-Request-ID",
+    "X-Requested-With",
     "X-Tenant-Id",
     "x-tenant-id",
     "x-tenant-slug",
