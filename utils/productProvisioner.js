@@ -38,12 +38,33 @@ function getProductIamProvisioning(productConfig) {
   };
 }
 
+async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 500) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) return response;
+
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        return response;
+      }
+
+      logger.warn(`Fetch to ${url} failed with status ${response.status}. Attempt ${i + 1} of ${retries}.`);
+      if (i === retries - 1) return response;
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      logger.warn(`Fetch to ${url} encountered network error: ${err.message}. Attempt ${i + 1} of ${retries}.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs * Math.pow(2, i)));
+  }
+  throw new Error(`Failed to fetch ${url} after ${retries} attempts.`);
+}
+
 async function _linkCommunicationIamUser(productCfg, { businessId, iamUserId }) {
   const url = `${productCfg.provisionUrl}/onboarding/link-iam-user`;
 
   let response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithRetry(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -256,7 +277,7 @@ async function _provisionCommunication(productCfg, data) {
 
   let res;
   try {
-    res = await fetch(url, {
+    res = await fetchWithRetry(url, {
       method:  'POST',
       headers: {
         'Content-Type': 'application/json',

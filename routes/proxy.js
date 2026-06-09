@@ -1,4 +1,4 @@
-﻿/**
+/**
  * routes/proxy.js
  *
  * Single proxy file for all microservice forwarding.
@@ -55,9 +55,9 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import jwt                       from 'jsonwebtoken';
 import rateLimit                 from 'express-rate-limit';
 import axios                     from 'axios';
-import { config }                from '../config/index.js';
-import { JWT_SECRET, PORTAL_SESSION_SECRET } from '../config/jwt.js';
+import { JWT_SECRET, PORTAL_SESSION_SECRET, JWT_ALGORITHM } from '../config/jwt.js';
 import logger                    from '../utils/logger.js';
+import { RedisRateLimitStore }   from '../utils/redisRateLimitStore.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
 import { authenticate }          from '../middleware/auth.js';
 import { addGatewaySignatureHeaders, createFileServiceHmac } from '../utils/gatewayHmac.js';
@@ -72,8 +72,34 @@ const router = express.Router();
  * from the public contact form AND authenticated dashboard file management).
  */
 const optionalAuthenticate = (req, res, next) => {
-  if (req.headers.authorization?.startsWith('Bearer ')) {
-    return authenticate(req, res, next);
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    delete req.headers['x-tenant-id'];
+    delete req.headers['x-tenant-slug'];
+    return next();
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
+      algorithms: [JWT_ALGORITHM],
+    });
+    const roleFromArray = Array.isArray(decoded.roles) ? decoded.roles[0] : undefined;
+    req.user = {
+      id: decoded.sub,
+      email: decoded.email,
+      role: decoded.role ?? roleFromArray,
+      tenantId: decoded.tenantId,
+      tenantDisplayId: typeof decoded.tenantSlug === 'string' ? decoded.tenantSlug.trim() : undefined,
+      sessionId: decoded.sessionId,
+    };
+    req.headers['x-tenant-id'] = decoded.tenantId;
+    req.headers['x-tenant-slug'] = decoded.tenantSlug;
+  } catch (err) {
+    logger.debug(`Optional auth token validation failed: ${err.message}`);
+    delete req.headers['x-tenant-id'];
+    delete req.headers['x-tenant-slug'];
   }
   next();
 };
@@ -183,6 +209,7 @@ function buildPortalProxy(cookieName, target, serviceName) {
   r.use(rateLimit({
     windowMs: 60_000,
     max: 300,
+    store: new RedisRateLimitStore(60_000),
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: 'Too many requests. Please slow down.' },
@@ -235,7 +262,7 @@ function buildPortalProxy(cookieName, target, serviceName) {
       });
     }
     try {
-      const decoded = jwt.verify(token, PORTAL_SESSION_SECRET, { algorithms: ['HS256'] });
+      const decoded = jwt.verify(token, PORTAL_SESSION_SECRET, { algorithms: [JWT_ALGORITHM] });
       req.user = {
         id:       decoded.sub,
         email:    decoded.email,

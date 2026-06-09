@@ -1,8 +1,7 @@
 import express from "express";
-import fs from "fs";
-import path from "path";
 import { authenticate } from "../middleware/auth.js";
 import { BadRequestError } from "../utils/errors.js";
+import { uploadFile } from "../utils/storage.js";
 
 const router = express.Router();
 
@@ -19,12 +18,6 @@ router.post("/proposal", authenticate, async (req, res, next) => {
 		}
 
 		const normalizedFileName = sanitizeFileName(fileName || `proposal-${Date.now()}.html`);
-		const uploadsDir = path.resolve(process.cwd(), "uploads", "proposals");
-		const outputPath = path.join(uploadsDir, normalizedFileName);
-
-		if (!fs.existsSync(uploadsDir)) {
-			fs.mkdirSync(uploadsDir, { recursive: true });
-		}
 
 		const normalizedBase64 =
 			String(contentBase64).includes(",") ? String(contentBase64).split(",")[1] : String(contentBase64);
@@ -42,11 +35,8 @@ router.post("/proposal", authenticate, async (req, res, next) => {
 				`Invalid base64 encoding: ${decodeErr instanceof Error ? decodeErr.message : 'unknown error'}`
 			);
 		}
-		fs.writeFileSync(outputPath, buffer);
 
-		const protocol = req.protocol || "http";
-		const host = req.get("host");
-		const publicUrl = `${protocol}://${host}/uploads/proposals/${normalizedFileName}`;
+		const publicUrl = await uploadFile(buffer, normalizedFileName, mimeType, req);
 
 		res
 			.status(201)

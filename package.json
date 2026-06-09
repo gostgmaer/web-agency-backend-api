@@ -12,6 +12,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1064.0",
     "axios": "^1.16.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
@@ -29,6 +30,7 @@
     "mongoose": "^8.23.1",
     "multer": "^2.1.1",
     "node-cron": "^3.0.3",
+    "rate-limit-redis": "^5.0.0",
     "razorpay": "^2.9.6",
     "stripe": "^22.0.2",
     "winston": "^3.11.0",

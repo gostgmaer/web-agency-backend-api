@@ -31,6 +31,6 @@ export const JWT_ISSUER = getRequiredAnyEnv('JWT_ISSUER');
 export const JWT_AUDIENCE = getRequiredAnyEnv('JWT_AUDIENCE');
 
 // Portal product session cookies (ea_comm_session, ja_session, …) are signed
-// with HS256 using the shared JWT_SECRET, regardless of whether the gateway
-// verifies IAM Bearer tokens with an RS256 public key.
-export const PORTAL_SESSION_SECRET = getRequiredAnyEnv('JWT_SECRET', 'JWT_ACCESS_SECRET');
+// with RS256 or HS256 depending on the configuration. We verify using
+// resolveJwtVerificationKey() which returns the public key when configured.
+export const PORTAL_SESSION_SECRET = resolveJwtVerificationKey();

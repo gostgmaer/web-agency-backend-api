@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { RedisRateLimitStore } from "./utils/redisRateLimitStore.js";
 import mongoSanitize from "express-mongo-sanitize";
 import "dotenv/config";
 import compression from "compression";
@@ -63,7 +64,7 @@ app.use((req, res, next) => {
  * Compression middleware - gzip responses
  */
 app.use(compression({
-  level: 6, // Balance between compression ratio and speed
+  level: 4, // Decrease CPU overhead under high load (Performance Risk 3)
   threshold: 1024, // Only compress responses > 1KB
   filter: (req, res) => {
     if (req.headers['x-no-compression']) {
@@ -80,6 +81,7 @@ app.use(compression({
 const limiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute window
   max: 200, // 200 requests per minute per IP (allows for burst)
+  store: new RedisRateLimitStore(60 * 1000),
   standardHeaders: true,
   legacyHeaders: false,
   message: {
