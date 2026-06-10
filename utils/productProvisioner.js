@@ -71,6 +71,8 @@ async function _linkCommunicationIamUser(productCfg, { businessId, iamUserId, te
         {
           'Content-Type': 'application/json',
           'X-Api-Key': productCfg.apiKey,
+          'x-tenant-id': tenantId || '',
+          'x-request-id': requestId || '',
         },
         {
           method: 'POST',
@@ -295,6 +297,8 @@ async function _provisionCommunication(productCfg, data) {
         {
           'Content-Type': 'application/json',
           'X-Api-Key':    productCfg.apiKey,
+          'x-tenant-id':  data.tenantId || '',
+          'x-request-id': data.requestId || '',
         },
         {
           method: 'POST',
