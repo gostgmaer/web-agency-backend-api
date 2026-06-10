@@ -744,7 +744,7 @@ async function assertVerifiedTransactionIntegrity({ transactionId, tenantId, pen
 }
 
 /** Shared post-payment provisioning: provision the product account and respond. */
-async function handlePostPayment(res, { productId, name, email, planKey, paymentId, businessName, externalId }) {
+async function handlePostPayment(res, { productId, name, email, planKey, paymentId, businessName, externalId, tenantId, requestId }) {
   let provisionResult = null;
   try {
     provisionResult = await provision(productId, {
@@ -754,6 +754,8 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
       paymentId,
       businessName: businessName || name,
       externalId,
+      tenantId,
+      requestId,
     });
   } catch (err) {
     // 409 = already purchased — surface this directly to the UI so the user
@@ -997,6 +999,8 @@ router.post('/verify', async (req, res, next) => {
       paymentId:    p === 'RAZORPAY' ? paymentId : token,
       businessName,
       externalId,
+      tenantId,
+      requestId:    req.requestId || '',
     });
   } catch (err) {
     next(err);

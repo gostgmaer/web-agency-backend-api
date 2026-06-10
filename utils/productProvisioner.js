@@ -21,6 +21,7 @@ import logger from './logger.js';
 import { AppError } from './errors.js';
 import { sendAdminCreatedUser, sendProductAccessGranted } from './email.js';
 import { provisionSharedIamUser } from './iamProvisioner.js';
+import { addGatewaySignatureHeaders, getPathFromUrl } from './gatewayHmac.js';
 
 function getProductIamProvisioning(productConfig) {
   if (!productConfig?.iamProvisioning) return null;
@@ -59,17 +60,26 @@ async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 500) {
   throw new Error(`Failed to fetch ${url} after ${retries} attempts.`);
 }
 
-async function _linkCommunicationIamUser(productCfg, { businessId, iamUserId }) {
+async function _linkCommunicationIamUser(productCfg, { businessId, iamUserId, tenantId, requestId }) {
   const url = `${productCfg.provisionUrl}/onboarding/link-iam-user`;
 
   let response;
   try {
     response = await fetchWithRetry(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key': productCfg.apiKey,
-      },
+      headers: addGatewaySignatureHeaders(
+        {
+          'Content-Type': 'application/json',
+          'X-Api-Key': productCfg.apiKey,
+        },
+        {
+          method: 'POST',
+          path: getPathFromUrl(url),
+          tenantId: tenantId || '',
+          requestId: requestId || '',
+          secret: config.gateway?.hmacSecret,
+        }
+      ),
       body: JSON.stringify({ businessId, iamUserId }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -186,6 +196,8 @@ export async function provision(productId, data) {
         await _linkCommunicationIamUser(productConfig, {
           businessId: result.businessId,
           iamUserId: iamProvisionResult.iamUserId,
+          tenantId: data.tenantId,
+          requestId: data.requestId,
         });
         break;
       default:
@@ -279,10 +291,19 @@ async function _provisionCommunication(productCfg, data) {
   try {
     res = await fetchWithRetry(url, {
       method:  'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Api-Key':    productCfg.apiKey,
-      },
+      headers: addGatewaySignatureHeaders(
+        {
+          'Content-Type': 'application/json',
+          'X-Api-Key':    productCfg.apiKey,
+        },
+        {
+          method: 'POST',
+          path: getPathFromUrl(url),
+          tenantId: data.tenantId || '',
+          requestId: data.requestId || '',
+          secret: config.gateway?.hmacSecret,
+        }
+      ),
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(30_000), // 30 s
     });

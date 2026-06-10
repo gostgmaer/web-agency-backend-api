@@ -1,4 +1,4 @@
-﻿/**
+/**
  * routes/communication.js
  *
  * Provision / manage EasyDev AI Communication Platform accounts.
@@ -114,6 +114,8 @@ router.post('/provision', authenticate, async (req, res, next) => {
       paymentId,
       businessName: businessName?.trim() || name.trim(),
       externalId,
+      tenantId:     req.headers['x-tenant-id'] || '',
+      requestId:    req.requestId || '',
     });
 
     return res.status(201).json({
