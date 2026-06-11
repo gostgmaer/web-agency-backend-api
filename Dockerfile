@@ -41,6 +41,9 @@ COPY --from=builder /app ./
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
   rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx
 
+# Patch OpenSSL CVE-2026-45447 (heap use-after-free in PKCS7_verify)
+RUN apk upgrade --no-cache libcrypto3 libssl3
+
 EXPOSE 3300
 
 CMD ["node", "server.js"]
