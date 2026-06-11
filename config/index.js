@@ -170,6 +170,14 @@ export const config = {
 		apiKey: process.env.PAYMENT_SERVICE_API_KEY || '',
 	},
 
+	// ─── AI Workflow Agent ──────────────────────────────────────────────────
+	// Multi-tenant AI workflow agent (analytics, workflow execution).
+	// The gateway proxies requests with HMAC-SHA256 signing.
+	aiWorkflow: {
+		serviceUrl: process.env.AI_WORKFLOW_URL || '',
+		signingSecret: process.env.AI_WORKFLOW_SIGNING_SECRET || '',
+	},
+
 	// ─── Multi-Product Configuration ─────────────────────────────────────────
 	// Each product key maps a product ID to its provisioning details.
 	// After a successful payment web-agency-backend-api calls the product's

@@ -41,6 +41,7 @@
  *     /comm/customer/*          → AI Communication /api/v1/*
  *     /comm/admin/*             → AI Communication /api/v1/admin/*
  *     /job-agent/proxy/*        → Job Agent /api/v1/*
+ *     /ai-workflow/*            → AI Workflow Agent /v1/* (HMAC signed)
  *
  *   PUBLIC (no Bearer — OAuth provider redirects)
  *     /comm/email-accounts/oauth/* → AI Communication /api/v1/email-accounts/oauth/*
@@ -62,6 +63,7 @@ import { RedisRateLimitStore }   from '../utils/redisRateLimitStore.js';
 import { getRuntimeTenantFallback } from '../utils/tenantFallback.js';
 import { authenticate }          from '../middleware/auth.js';
 import { addGatewaySignatureHeaders, createFileServiceHmac } from '../utils/gatewayHmac.js';
+import { signAiWorkflowRequest }               from '../utils/aiWorkflowSigning.js';
 
 const router = express.Router();
 
@@ -513,5 +515,78 @@ const jobPortalProxy = () =>
 
 router.use('/job-agent/portal', jobPortalProxy());
 router.use('/job-agent/proxy',  authenticate, jobProxy());
+
+// ─── AI Workflow Agent ─────────────────────────────────────────────────────
+//  Authenticated Bearer proxy with HMAC-SHA256 request signing.
+//  The AI agent requires x-signature-key-version, x-signature-timestamp,
+//  and x-signature headers computed over METHOD\nPATH\nTIMESTAMP\nSHA256(BODY).
+//  All routes share the /ai-workflow prefix:
+//  /ai-workflow/v1/analytics/*  — AUTHENTICATED Bearer (EasyDev dashboard → AI agent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const aiWorkflowTarget = parseHost(config.aiWorkflow?.serviceUrl || '');
+const aiWorkflowPath   = parsePath(config.aiWorkflow?.serviceUrl || '', '');
+const aiWorkflowSecret = config.aiWorkflow?.signingSecret || '';
+
+if (aiWorkflowTarget && aiWorkflowSecret) {
+  const aiWorkflowProxy = createProxyMiddleware({
+    target: aiWorkflowTarget,
+    changeOrigin: true,
+    pathRewrite: (path) => `${aiWorkflowPath}${path}`,
+    on: {
+      proxyReq(proxyReq, req) {
+        const { tenantId } = getRuntimeTenantFallback();
+        const effectiveTenantId = String(req.headers['x-tenant-id'] || req.user?.tenantId || tenantId || '');
+
+        // Inject tenant and principal headers required by the AI agent.
+        proxyReq.setHeader('x-tenant-id', effectiveTenantId);
+        if (req.user) {
+          proxyReq.setHeader('x-principal-id', req.user.id ?? '');
+          // Map gateway role to AI agent roles (admin, operator, viewer).
+          const role = String(req.user.role || 'viewer').toLowerCase();
+          const aiRole = ['admin', 'operator', 'viewer'].includes(role) ? role : 'viewer';
+          proxyReq.setHeader('x-principal-roles', aiRole);
+        }
+        if (req.requestId) proxyReq.setHeader('x-trace-id', req.requestId);
+
+        // Compute HMAC-SHA256 signature over the downstream request path.
+        // The AI agent signs PATH with query string exactly as received.
+        const downstreamPath = `${aiWorkflowPath}${req.url || ''}`;
+        const signingHeaders = signAiWorkflowRequest({
+          method: req.method,
+          path: downstreamPath,
+          body: '',   // analytics endpoints are GET-only; body is empty
+          secret: aiWorkflowSecret,
+        });
+        if (signingHeaders) {
+          proxyReq.setHeader('x-signature-key-version', signingHeaders['x-signature-key-version']);
+          proxyReq.setHeader('x-signature-timestamp',   signingHeaders['x-signature-timestamp']);
+          proxyReq.setHeader('x-signature',             signingHeaders['x-signature']);
+        }
+
+        // Strip the browser Authorization header — the AI agent uses signing, not Bearer.
+        proxyReq.removeHeader('authorization');
+      },
+      error(err, _req, res) {
+        logger.error('AI Workflow proxy error:', { message: err.message });
+        if (!res.headersSent) {
+          res.status(502).json({
+            success: false,
+            message: 'AI Workflow service is currently unavailable. Please try again later.',
+          });
+        }
+      },
+    },
+  });
+
+  router.use('/ai-workflow', authenticate, aiWorkflowProxy);
+} else {
+  if (!aiWorkflowTarget) {
+    logger.info('AI_WORKFLOW_URL not configured — /ai-workflow routes will return 503');
+  } else if (!aiWorkflowSecret) {
+    logger.warn('AI_WORKFLOW_SIGNING_SECRET not configured — /ai-workflow routes will return 503');
+  }
+  router.use('/ai-workflow', serviceUnavailable('AI Workflow'));
+}
 
 export default router;
