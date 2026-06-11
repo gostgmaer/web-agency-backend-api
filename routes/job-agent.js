@@ -149,18 +149,27 @@ router.post("/launch", authenticate, async (req, res, next) => {
       const paymentBase = String(process.env.PAYMENT_SERVICE_URL ?? "").replace(/\/+$/, "");
 
       if (jobAgentApiKey && paymentBase && req.user?.id) {
-        // Fetch the user's active subscription for the job-agent product
+        // Fetch the user's active subscription for the job-agent product.
+        // The query string is baked into the URL (not axios `params`) so the
+        // signed path matches exactly what payment-microservice's
+        // GatewayHmacGuard reconstructs, and the signed tenantId/requestId are
+        // also sent as headers for the same reason.
+        const subTenantId = req.user?.tenantId || req.headers["x-tenant-id"] || "";
+        const subUrl = `${paymentBase}/api/v1/subscriptions/active?productId=easydev-job-agent`;
         const subRes = await axios.get(
-          `${paymentBase}/api/v1/subscriptions/active`,
+          subUrl,
           {
-            headers: addGatewaySignatureHeaders({ Authorization: authHeader }, {
+            headers: addGatewaySignatureHeaders({
+              Authorization: authHeader,
+              "x-tenant-id": subTenantId,
+              ...(req.requestId ? { "x-request-id": req.requestId } : {}),
+            }, {
               method: "GET",
-              path: getPathFromUrl(`${paymentBase}/api/v1/subscriptions/active`),
-              tenantId: req.user?.tenantId || req.headers["x-tenant-id"] || "",
+              path: getPathFromUrl(subUrl),
+              tenantId: subTenantId,
               requestId: req.requestId,
               secret: config.gateway?.hmacSecret,
             }),
-            params: { productId: "easydev-job-agent" },
             timeout: 5_000,
             validateStatus: (s) => s < 500,
           },

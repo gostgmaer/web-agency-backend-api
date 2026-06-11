@@ -22,12 +22,14 @@ if (config.redis?.enabled && config.redis?.url) {
 }
 
 export class RedisRateLimitStore {
-  constructor(windowMs) {
+  constructor(windowMs, prefix = 'rl:') {
     this.windowMs = windowMs || 60000;
+    this.prefix = prefix;
     this.memStore = new Map();
   }
 
-  async increment(key) {
+  async increment(rawKey) {
+    const key = this.prefix + rawKey;
     if (redis) {
       try {
         const count = await redis.incr(key);
@@ -60,7 +62,8 @@ export class RedisRateLimitStore {
     return record;
   }
 
-  async decrement(key) {
+  async decrement(rawKey) {
+    const key = this.prefix + rawKey;
     if (redis) {
       try {
         await redis.decr(key);
@@ -75,7 +78,8 @@ export class RedisRateLimitStore {
     }
   }
 
-  async resetKey(key) {
+  async resetKey(rawKey) {
+    const key = this.prefix + rawKey;
     if (redis) {
       try {
         await redis.del(key);

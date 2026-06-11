@@ -56,7 +56,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import jwt                       from 'jsonwebtoken';
 import rateLimit                 from 'express-rate-limit';
 import axios                     from 'axios';
-import { JWT_SECRET, PORTAL_SESSION_SECRET, JWT_ALGORITHM } from '../config/jwt.js';
+import { JWT_SECRET, PORTAL_SESSION_SECRET, JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
 import { config }                  from '../config/index.js';
 import logger                    from '../utils/logger.js';
 import { RedisRateLimitStore }   from '../utils/redisRateLimitStore.js';
@@ -243,18 +243,22 @@ function buildPortalProxy(cookieName, target, serviceName) {
   // can intercept Set-Cookie and re-set it against the gateway origin.
   r.post('/api/v1/auth/sso/exchange', express.json({ limit: '1mb' }), async (req, res, next) => {
     try {
+      // The signed tenantId/requestId must also be sent as headers so any
+      // downstream GatewayHmacGuard reconstructs the same payload.
+      const exchangeTenantId = req.user?.tenantId || req.headers['x-tenant-id'] || '';
       const response = await axios.post(
         `${target}/api/v1/auth/sso/exchange`,
         req.body ?? {},
         {
           headers: addGatewaySignatureHeaders({
             'Content-Type':   'application/json',
+            'x-tenant-id':    exchangeTenantId,
             'x-request-id':   req.requestId      ?? '',
             'x-forwarded-for': req.ip             ?? '',
           }, {
             method: 'POST',
             path: '/api/v1/auth/sso/exchange',
-            tenantId: req.user?.tenantId || req.headers['x-tenant-id'] || '',
+            tenantId: exchangeTenantId,
             requestId: req.requestId,
             secret: config.gateway?.hmacSecret,
           }),

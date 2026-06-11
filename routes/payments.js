@@ -28,8 +28,10 @@
 import express       from 'express';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import jwt           from 'jsonwebtoken';
+import rateLimit     from 'express-rate-limit';
 import { config }    from '../config/index.js';
-import { JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
+import { JWT_SECRET, JWT_ISSUER, JWT_AUDIENCE, JWT_ALGORITHM } from '../config/jwt.js';
+import { RedisRateLimitStore } from '../utils/redisRateLimitStore.js';
 import logger        from '../utils/logger.js';
 import { provision } from '../utils/productProvisioner.js';
 import { AppError }  from '../utils/errors.js';
@@ -236,6 +238,36 @@ function pmAuthHeaders(bearerToken, tenantId) {
   };
 }
 
+/**
+ * Call payment-microservice with service (x-api-key) or user (Bearer) auth.
+ * Every request is signed with the gateway HMAC headers so payment-microservice
+ * can enforce GatewayHmacGuard ("only reachable through the gateway").
+ *
+ * The signed payload must mirror exactly what the guard reconstructs:
+ *   METHOD | /full/path?query | x-tenant-id header | x-request-id header | ts
+ */
+function pmApi(method, path, { data, tenantId, userId, userEmail, bearer, requestId } = {}) {
+  const url = `${pmUrl()}${path}`;
+  const headers = bearer
+    ? pmAuthHeaders(bearer, tenantId)
+    : pmServiceHeaders(tenantId, userId, userEmail);
+  if (requestId) headers['x-request-id'] = requestId;
+
+  const signed = addGatewaySignatureHeaders(headers, {
+    method,
+    path: getPathFromUrl(url),
+    tenantId: headers['x-tenant-id'] || '',
+    requestId: requestId || '',
+    secret: config.gateway?.hmacSecret,
+  });
+
+  return apiCall(url, {
+    method,
+    ...(data !== undefined ? { data } : {}),
+    headers: signed,
+  });
+}
+
 function resolveProductId(body) {
   const requestedProductId = typeof body?.productId === 'string' ? body.productId.trim() : '';
   if (requestedProductId) {
@@ -288,6 +320,7 @@ function tryResolveCheckoutUser(req) {
     const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET, {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
+      algorithms: [JWT_ALGORITHM],
     });
 
     return {
@@ -619,11 +652,13 @@ function normalizeCustomerInvoice(invoice) {
   };
 }
 
-async function ensureNoActiveProductSubscription({ tenantId, customerId, customerEmail, productId }) {
-  const result = await apiCall(
-    `${pmUrl()}/api/v1/subscriptions`,
-    { method: 'GET', headers: pmServiceHeaders(tenantId, customerId, customerEmail) },
-  );
+async function ensureNoActiveProductSubscription({ tenantId, customerId, customerEmail, productId, requestId }) {
+  const result = await pmApi('GET', '/api/v1/subscriptions', {
+    tenantId,
+    userId: customerId,
+    userEmail: customerEmail,
+    requestId,
+  });
 
   if (result.error) {
     logger.error('subscription pre-check failed', {
@@ -648,11 +683,13 @@ async function ensureNoActiveProductSubscription({ tenantId, customerId, custome
   }
 }
 
-async function assertVerifiedTransactionIntegrity({ transactionId, tenantId, pending }) {
-  const txResult = await apiCall(
-    `${pmUrl()}/api/v1/payments/${encodeURIComponent(transactionId)}`,
-    { method: 'GET', headers: pmServiceHeaders(tenantId, pending.customerId, pending.customerEmail) },
-  );
+async function assertVerifiedTransactionIntegrity({ transactionId, tenantId, pending, requestId }) {
+  const txResult = await pmApi('GET', `/api/v1/payments/${encodeURIComponent(transactionId)}`, {
+    tenantId,
+    userId: pending.customerId,
+    userEmail: pending.customerEmail,
+    requestId,
+  });
 
   if (txResult.error) {
     logger.error('transaction integrity check failed: unable to fetch transaction', {
@@ -800,7 +837,29 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
  *          RAZORPAY → { provider, orderId, amount, currency, keyId }
  *          CASH     → { provider, referenceCode, transactionId, attemptId, amount, currency }
  */
-router.post('/initiate', async (req, res, next) => {
+// Public checkout endpoints carry no Bearer auth — apply tight per-IP rate
+// limits (production only, mirroring the portal proxy pattern).
+const initiateLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  store: new RedisRateLimitStore(60_000, 'rl:pay:init:'),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many checkout attempts. Please try again shortly.' },
+  skip: () => process.env.NODE_ENV !== 'production',
+});
+
+const verifyLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  store: new RedisRateLimitStore(60_000, 'rl:pay:verify:'),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many verification attempts. Please try again shortly.' },
+  skip: () => process.env.NODE_ENV !== 'production',
+});
+
+router.post('/initiate', initiateLimiter, async (req, res, next) => {
   try {
     if (!config.payment?.apiKey) {
       throw new AppError('Payment service is not configured on this server.', 503);
@@ -827,6 +886,7 @@ router.post('/initiate', async (req, res, next) => {
       customerId,
       customerEmail: checkoutIdentity.customerEmail,
       productId,
+      requestId: req.requestId,
     });
 
     if (!PUBLIC_CHECKOUT_PROVIDERS.includes(p)) {
@@ -836,8 +896,10 @@ router.post('/initiate', async (req, res, next) => {
     // ── Public checkout uses INR providers only ──
     const amount = plan.INR;
 
-    const result = await apiCall(`${pmUrl()}/api/v1/payments/initiate`, {
-      method: 'POST',
+    const result = await pmApi('POST', '/api/v1/payments/initiate', {
+      tenantId,
+      userId: customerId,
+      requestId: req.requestId,
       data: {
         orderId,
         idempotencyKey: idempKey,
@@ -861,7 +923,6 @@ router.post('/initiate', async (req, res, next) => {
           source: 'web-agency-checkout',
         },
       },
-      headers: pmServiceHeaders(tenantId, customerId),
     });
 
     if (result.error) {
@@ -924,7 +985,7 @@ router.post('/initiate', async (req, res, next) => {
  *   RAZORPAY also requires: { paymentId, signature }
  * Returns: { paymentVerified, loginUrl?, ... }
  */
-router.post('/verify', async (req, res, next) => {
+router.post('/verify', verifyLimiter, async (req, res, next) => {
   try {
     if (!config.payment?.apiKey) {
       throw new AppError('Payment service is not configured on this server.', 503);
@@ -969,10 +1030,12 @@ router.post('/verify', async (req, res, next) => {
       ? { attemptId, providerPaymentId: paymentId, providerSignature: signature }
       : { attemptId, providerPaymentId: token };
 
-    const result = await apiCall(
-      `${pmUrl()}/api/v1/payments/${transactionId}/verify`,
-      { method: 'POST', data: verifyData, headers: pmServiceHeaders(tenantId, pending.customerId) },
-    );
+    const result = await pmApi('POST', `/api/v1/payments/${encodeURIComponent(transactionId)}/verify`, {
+      tenantId,
+      userId: pending.customerId,
+      requestId: req.requestId,
+      data: verifyData,
+    });
 
     if (result.error) {
       logger.error(`payment-microservice ${p} verify failed`, { transactionId, status: result.status });
@@ -983,6 +1046,7 @@ router.post('/verify', async (req, res, next) => {
       transactionId,
       tenantId,
       pending,
+      requestId: req.requestId,
     });
 
     await deletePending(token);
@@ -1029,10 +1093,11 @@ router.get(
       ].filter(Boolean)).map((item) => item.id);
 
       const subscriptionResults = await Promise.all(customerIds.map((customerId) =>
-        apiCall(
-          `${pmUrl()}/api/v1/subscriptions${qs ? `?${qs}` : ''}`,
-          { method: 'GET', headers: pmServiceHeaders(tenantId, customerId) },
-        )
+        pmApi('GET', `/api/v1/subscriptions${qs ? `?${qs}` : ''}`, {
+          tenantId,
+          userId: customerId,
+          requestId: req.requestId,
+        })
       ));
 
       const failedSubscription = subscriptionResults.find((result) => result.error);
@@ -1046,10 +1111,11 @@ router.get(
 
       if (items.length === 0) {
         const transactionResults = await Promise.all(customerIds.map((customerId) =>
-          apiCall(
-            `${pmUrl()}/api/v1/payments${qs ? `?${qs}` : ''}`,
-            { method: 'GET', headers: pmServiceHeaders(tenantId, customerId) },
-          )
+          pmApi('GET', `/api/v1/payments${qs ? `?${qs}` : ''}`, {
+            tenantId,
+            userId: customerId,
+            requestId: req.requestId,
+          })
         ));
 
         const failedTransaction = transactionResults.find((result) => result.error);
@@ -1111,10 +1177,12 @@ router.get(
       ].filter(Boolean)).map((item) => item.id);
 
       const subscriptionResults = await Promise.all(customerIds.map((customerId) =>
-        apiCall(
-          `${pmUrl()}/api/v1/subscriptions`,
-          { method: 'GET', headers: pmServiceHeaders(tenantId, customerId, email || undefined) },
-        )
+        pmApi('GET', '/api/v1/subscriptions', {
+          tenantId,
+          userId: customerId,
+          userEmail: email || undefined,
+          requestId: req.requestId,
+        })
       ));
 
       const failedSubscription = subscriptionResults.find((result) => result.error);
@@ -1129,10 +1197,12 @@ router.get(
 
       if (items.length === 0) {
         const transactionResults = await Promise.all(customerIds.map((customerId) =>
-          apiCall(
-            `${pmUrl()}/api/v1/payments`,
-            { method: 'GET', headers: pmServiceHeaders(tenantId, customerId, email || undefined) },
-          )
+          pmApi('GET', '/api/v1/payments', {
+            tenantId,
+            userId: customerId,
+            userEmail: email || undefined,
+            requestId: req.requestId,
+          })
         ));
 
         const failedTransaction = transactionResults.find((result) => result.error);
@@ -1177,10 +1247,11 @@ router.get(
       ].filter(Boolean)).map((item) => item.id);
 
       const invoiceResults = await Promise.all(customerIds.map((customerId) =>
-        apiCall(
-          `${pmUrl()}/api/v1/billing/invoices${qs ? `?${qs}` : ''}`,
-          { method: 'GET', headers: pmServiceHeaders(tenantId, customerId) },
-        )
+        pmApi('GET', `/api/v1/billing/invoices${qs ? `?${qs}` : ''}`, {
+          tenantId,
+          userId: customerId,
+          requestId: req.requestId,
+        })
       ));
 
       const failedInvoice = invoiceResults.find((result) => result.error);
@@ -1218,13 +1289,12 @@ router.get(
       if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
 
       const tenantId = req.headers['x-tenant-id'];
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/payment-methods`,
-        {
-          method: 'GET',
-          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
-        },
-      );
+      const result = await pmApi('GET', '/api/v1/payment-methods', {
+        tenantId,
+        userId: req.user?.id,
+        userEmail: req.user?.email,
+        requestId: req.requestId,
+      });
 
       if (result.error) {
         logger.error('customer payment methods failed', { status: result.status, userId: req.user?.id });
@@ -1251,16 +1321,15 @@ router.post(
       if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
 
       const tenantId = req.headers['x-tenant-id'];
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/payment-methods/setup-intent`,
-        {
-          method: 'POST',
-          data: {
-            provider: req.body?.provider,
-          },
-          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
+      const result = await pmApi('POST', '/api/v1/payment-methods/setup-intent', {
+        tenantId,
+        userId: req.user?.id,
+        userEmail: req.user?.email,
+        requestId: req.requestId,
+        data: {
+          provider: req.body?.provider,
         },
-      );
+      });
 
       if (result.error) {
         logger.error('customer payment setup intent failed', { status: result.status, userId: req.user?.id });
@@ -1287,17 +1356,16 @@ router.post(
       if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
 
       const tenantId = req.headers['x-tenant-id'];
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/payment-methods/setup-intents/${encodeURIComponent(req.params.setupIntentId)}/complete`,
-        {
-          method: 'POST',
-          data: {
-            provider: req.body?.provider,
-            setAsDefault: req.body?.setAsDefault,
-          },
-          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
+      const result = await pmApi('POST', `/api/v1/payment-methods/setup-intents/${encodeURIComponent(req.params.setupIntentId)}/complete`, {
+        tenantId,
+        userId: req.user?.id,
+        userEmail: req.user?.email,
+        requestId: req.requestId,
+        data: {
+          provider: req.body?.provider,
+          setAsDefault: req.body?.setAsDefault,
         },
-      );
+      });
 
       if (result.error) {
         logger.error('customer payment setup completion failed', {
@@ -1328,16 +1396,15 @@ router.patch(
       if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
 
       const tenantId = req.headers['x-tenant-id'];
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/payment-methods/${encodeURIComponent(req.params.paymentMethodId)}/default`,
-        {
-          method: 'PATCH',
-          data: {
-            provider: req.body?.provider,
-          },
-          headers: pmServiceHeaders(tenantId, req.user?.id, req.user?.email),
+      const result = await pmApi('PATCH', `/api/v1/payment-methods/${encodeURIComponent(req.params.paymentMethodId)}/default`, {
+        tenantId,
+        userId: req.user?.id,
+        userEmail: req.user?.email,
+        requestId: req.requestId,
+        data: {
+          provider: req.body?.provider,
         },
-      );
+      });
 
       if (result.error) {
         logger.error('customer payment default method update failed', {
@@ -1371,17 +1438,15 @@ router.delete(
       }
 
       const tenantId = req.headers['x-tenant-id'];
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/subscriptions/${encodeURIComponent(req.params.id)}`,
-        {
-          method: 'DELETE',
-          data: {
-            reason: req.body?.reason,
-            immediate: Boolean(req.body?.immediate),
-          },
-          headers: pmServiceHeaders(tenantId, req.user?.id),
+      const result = await pmApi('DELETE', `/api/v1/subscriptions/${encodeURIComponent(req.params.id)}`, {
+        tenantId,
+        userId: req.user?.id,
+        requestId: req.requestId,
+        data: {
+          reason: req.body?.reason,
+          immediate: Boolean(req.body?.immediate),
         },
-      );
+      });
 
       if (result.error) {
         logger.error('customer payment cancellation failed', { status: result.status, userId: req.user?.id, subscriptionId: req.params.id });
@@ -1413,14 +1478,12 @@ router.patch(
       const requestedPlanKey = normalizePlanKey(req.body?.planKey) || '';
       const targetPlan = getBillingPlan(requestedPlanKey);
       const tenantId = req.headers['x-tenant-id'];
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/subscriptions/${encodeURIComponent(req.params.id)}/plan`,
-        {
-          method: 'PATCH',
-          data: { planId: targetPlan.planId },
-          headers: pmServiceHeaders(tenantId, req.user?.id),
-        },
-      );
+      const result = await pmApi('PATCH', `/api/v1/subscriptions/${encodeURIComponent(req.params.id)}/plan`, {
+        tenantId,
+        userId: req.user?.id,
+        requestId: req.requestId,
+        data: { planId: targetPlan.planId },
+      });
 
       if (result.error) {
         logger.error('customer payment plan change failed', {
@@ -1454,13 +1517,14 @@ router.patch(
  */
 router.post('/webhooks/razorpay', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!config.payment?.serviceUrl) {
-    logger.warn('Razorpay webhook received but PAYMENT_SERVICE_URL not set — ignoring');
-    return res.sendStatus(200);
+    // 503 (not 200) so Razorpay retries instead of silently dropping the event.
+    logger.warn('Razorpay webhook received but PAYMENT_SERVICE_URL not set');
+    return res.sendStatus(503);
   }
 
   try {
     const webhookUrl = `${pmUrl()}/api/v1/webhooks/razorpay`;
-    await fetch(`${pmUrl()}/api/v1/webhooks/razorpay`, {
+    const response = await fetch(webhookUrl, {
       method:  'POST',
       headers: addGatewaySignatureHeaders({
         'content-type':         'application/json',
@@ -1475,11 +1539,17 @@ router.post('/webhooks/razorpay', express.raw({ type: 'application/json' }), asy
       body:   req.body,
       signal: AbortSignal.timeout(15_000),
     });
+    if (!response.ok) {
+      logger.error('Razorpay webhook forward rejected by payment-microservice', { status: response.status });
+      // 4xx = invalid signature/payload — do not ask the provider to retry.
+      return res.sendStatus(response.status >= 500 ? 502 : 200);
+    }
+    return res.sendStatus(200);
   } catch (err) {
     logger.error('Razorpay webhook forwarding error', { error: err.message });
+    // Surface a retryable failure so Razorpay redelivers the event.
+    return res.sendStatus(502);
   }
-
-  res.sendStatus(200);
 });
 
 /**
@@ -1488,13 +1558,14 @@ router.post('/webhooks/razorpay', express.raw({ type: 'application/json' }), asy
  */
 router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!config.payment?.serviceUrl) {
-    logger.warn('Stripe webhook received but PAYMENT_SERVICE_URL not set — ignoring');
-    return res.sendStatus(200);
+    // 503 (not 200) so Stripe retries instead of silently dropping the event.
+    logger.warn('Stripe webhook received but PAYMENT_SERVICE_URL not set');
+    return res.sendStatus(503);
   }
 
   try {
     const webhookUrl = `${pmUrl()}/api/v1/webhooks/stripe`;
-    await fetch(`${pmUrl()}/api/v1/webhooks/stripe`, {
+    const response = await fetch(webhookUrl, {
       method:  'POST',
       headers: addGatewaySignatureHeaders({
         'content-type':    'application/json',
@@ -1509,11 +1580,17 @@ router.post('/webhooks/stripe', express.raw({ type: 'application/json' }), async
       body:   req.body,
       signal: AbortSignal.timeout(15_000),
     });
+    if (!response.ok) {
+      logger.error('Stripe webhook forward rejected by payment-microservice', { status: response.status });
+      // 4xx = invalid signature/payload — do not ask the provider to retry.
+      return res.sendStatus(response.status >= 500 ? 502 : 200);
+    }
+    return res.sendStatus(200);
   } catch (err) {
     logger.error('Stripe webhook forwarding error', { error: err.message });
+    // Surface a retryable failure so Stripe redelivers the event.
+    return res.sendStatus(502);
   }
-
-  res.sendStatus(200);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1543,10 +1620,10 @@ router.get('/methods', async (req, res, next) => {
     }
 
     const tenantId = resolveEffectiveTenantId(req.headers['x-tenant-id']);
-    const result   = await apiCall(
-      `${pmUrl()}/api/v1/payments/methods`,
-      { method: 'GET', headers: pmServiceHeaders(tenantId) },
-    );
+    const result   = await pmApi('GET', '/api/v1/payments/methods', {
+      tenantId,
+      requestId: req.requestId,
+    });
 
     if (result.error) {
       logger.warn('payment-microservice /methods returned error', { status: result.status });
@@ -1575,11 +1652,20 @@ router.get('/subscriptions/plans', async (req, res, next) => {
       throw new AppError('Payment service is not configured.', 503);
     }
 
+    // Public catalog read — no tenant requirement, but still signed so the
+    // GatewayHmacGuard on payment-microservice accepts it.
     const qs = new URLSearchParams(req.query).toString();
-    const result = await apiCall(
-      `${pmUrl()}/api/v1/subscriptions/plans${qs ? `?${qs}` : ''}`,
-      { method: 'GET' },
-    );
+    const plansUrl = `${pmUrl()}/api/v1/subscriptions/plans${qs ? `?${qs}` : ''}`;
+    const result = await apiCall(plansUrl, {
+      method: 'GET',
+      headers: addGatewaySignatureHeaders({}, {
+        method: 'GET',
+        path: getPathFromUrl(plansUrl),
+        tenantId: '',
+        requestId: '',
+        secret: config.gateway?.hmacSecret,
+      }),
+    });
 
     if (result.error) {
       logger.error('payment plan catalog failed', { status: result.status });
@@ -1610,10 +1696,11 @@ router.get(
     try {
       if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
 
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/admin/dashboard`,
-        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
-      );
+      const result = await pmApi('GET', '/api/v1/admin/dashboard', {
+        bearer: req.headers['authorization'],
+        tenantId: req.headers['x-tenant-id'],
+        requestId: req.requestId,
+      });
 
       if (result.error) {
         logger.error('payment admin stats failed', { status: result.status });
@@ -1646,10 +1733,11 @@ router.get(
       if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
 
       const qs     = new URLSearchParams(req.query).toString();
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/admin/transactions${qs ? `?${qs}` : ''}`,
-        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
-      );
+      const result = await pmApi('GET', `/api/v1/admin/transactions${qs ? `?${qs}` : ''}`, {
+        bearer: req.headers['authorization'],
+        tenantId: req.headers['x-tenant-id'],
+        requestId: req.requestId,
+      });
 
       if (result.error) {
         logger.error('payment admin transactions failed', { status: result.status });
@@ -1681,10 +1769,11 @@ router.get(
       if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
 
       const qs     = new URLSearchParams(req.query).toString();
-      const result = await apiCall(
-        `${pmUrl()}/api/v1/admin/subscriptions${qs ? `?${qs}` : ''}`,
-        { method: 'GET', headers: pmAuthHeaders(req.headers['authorization'], req.headers['x-tenant-id']) },
-      );
+      const result = await pmApi('GET', `/api/v1/admin/subscriptions${qs ? `?${qs}` : ''}`, {
+        bearer: req.headers['authorization'],
+        tenantId: req.headers['x-tenant-id'],
+        requestId: req.requestId,
+      });
 
       if (result.error) {
         logger.error('payment admin subscriptions failed', { status: result.status });
