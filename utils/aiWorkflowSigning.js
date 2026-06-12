@@ -25,7 +25,12 @@ import crypto from 'crypto';
 export function signAiWorkflowRequest({ method, path, body = '', secret, keyVersion = 'v1' }) {
   if (!secret) return null;
 
-  const timestamp = new Date().toISOString();
+  // Whole-second timestamp with an explicit "+00:00" offset. The Python agent
+  // re-serializes the parsed timestamp via datetime.isoformat() before re-signing,
+  // which emits "+00:00" (and drops sub-second when microsecond=0). The default
+  // JS toISOString() form ("...123Z", milliseconds) does NOT round-trip and breaks
+  // signature verification. See multi-tennet-ai-agent/app/security/signing.py.
+  const timestamp = new Date().toISOString().slice(0, 19) + '+00:00';
   const bodyBytes = typeof body === 'string' ? body : body.toString('utf-8');
   const bodyHash = crypto.createHash('sha256').update(bodyBytes).digest('hex');
 

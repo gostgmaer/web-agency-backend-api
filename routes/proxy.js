@@ -167,9 +167,14 @@ function buildProxy(target, basePath, serviceName, options = {}) {
         }
         if (req.requestId) proxyReq.setHeader('x-request-id', req.requestId);
 
+        // Sign the ACTUAL outgoing path. http-proxy-middleware has already applied
+        // pathRewrite (req.url now holds the rewritten downstream path), so
+        // `${basePath}${req.url}` would DOUBLE the prefix and break the downstream
+        // GatewayHmacGuard (which verifies over its own req.url). proxyReq.path is
+        // the canonical outgoing path the downstream service receives.
         const signatureHeaders = addGatewaySignatureHeaders({}, {
           method: req.method,
-          path: `${basePath}${req.url || ''}`,
+          path: proxyReq.path || `${basePath}${req.url || ''}`,
           tenantId: effectiveTenantId,
           requestId: req.requestId,
           secret: config.gateway?.hmacSecret,
@@ -375,7 +380,9 @@ if (config.auth.serviceUrl) {
 
         const signatureHeaders = addGatewaySignatureHeaders({}, {
           method: req.method,
-          path: `/api/v1/iam/auth${req.url || ''}`,
+          // proxyReq.path is the rewritten outgoing path; avoid double-prefixing
+          // (req.url is already rewritten by http-proxy-middleware at this point).
+          path: proxyReq.path || `/api/v1/iam/auth${req.url || ''}`,
           tenantId: effectiveTenantId,
           requestId: req.requestId,
           secret: config.gateway?.hmacSecret,
@@ -553,9 +560,12 @@ if (aiWorkflowTarget && aiWorkflowSecret) {
         }
         if (req.requestId) proxyReq.setHeader('x-trace-id', req.requestId);
 
-        // Compute HMAC-SHA256 signature over the downstream request path.
-        // The AI agent signs PATH with query string exactly as received.
-        const downstreamPath = `${aiWorkflowPath}${req.url || ''}`;
+        // Compute HMAC-SHA256 signature over the downstream request PATH ONLY.
+        // The AI agent verifies using Starlette scope["path"], which EXCLUDES the
+        // query string — so the signed path must have the query stripped.
+        // proxyReq.path is the actual rewritten target path (http-proxy-middleware
+        // already applied pathRewrite to req.url by this point).
+        const downstreamPath = String(proxyReq.path || `${aiWorkflowPath}${req.url || ''}`).split('?')[0];
         const signingHeaders = signAiWorkflowRequest({
           method: req.method,
           path: downstreamPath,
