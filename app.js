@@ -32,6 +32,7 @@ import { config } from "./config/index.js";
 import { getRuntimeTenantFallback } from "./utils/tenantFallback.js";
 
 const app = express();
+app.set("trust proxy", 1);
 const isDevelopment = config.app.nodeEnv !== "production";
 
 /**
