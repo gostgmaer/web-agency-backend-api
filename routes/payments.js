@@ -1042,6 +1042,12 @@ router.post('/verify', verifyLimiter, async (req, res, next) => {
       throw new AppError(result.data?.message || 'Payment verification failed.', result.status || 502);
     }
 
+    const pmData = result.data?.data ?? result.data;
+    if (pmData && pmData.success === false) {
+      logger.warn(`payment-microservice ${p} verify returned success=false`, { transactionId });
+      throw new AppError('Payment verification failed. Please check your payment details and try again.', 400);
+    }
+
     await assertVerifiedTransactionIntegrity({
       transactionId,
       tenantId,
