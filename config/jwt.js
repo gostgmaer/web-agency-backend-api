@@ -30,7 +30,5 @@ export const JWT_ALGORITHM = resolveJwtPublicKey() ? 'RS256' : 'HS256';
 export const JWT_ISSUER = getRequiredAnyEnv('JWT_ISSUER');
 export const JWT_AUDIENCE = getRequiredAnyEnv('JWT_AUDIENCE');
 
-// Portal product session cookies (ea_comm_session, ja_session, …) are signed
-// with RS256 or HS256 depending on the configuration. We verify using
-// resolveJwtVerificationKey() which returns the public key when configured.
-export const PORTAL_SESSION_SECRET = resolveJwtVerificationKey();
+export const PORTAL_SESSION_SECRET = process.env.PORTAL_SESSION_SECRET || process.env.JWT_SECRET || getRequiredAnyEnv('JWT_ACCESS_SECRET');
+export const PORTAL_SESSION_ALGORITHM = process.env.PORTAL_SESSION_ALGORITHM || 'HS256';

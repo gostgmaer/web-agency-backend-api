@@ -56,7 +56,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import jwt                       from 'jsonwebtoken';
 import rateLimit                 from 'express-rate-limit';
 import axios                     from 'axios';
-import { JWT_SECRET, PORTAL_SESSION_SECRET, JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE } from '../config/jwt.js';
+import { JWT_SECRET, PORTAL_SESSION_SECRET, JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE, PORTAL_SESSION_ALGORITHM } from '../config/jwt.js';
 import { config }                  from '../config/index.js';
 import logger                    from '../utils/logger.js';
 import { RedisRateLimitStore }   from '../utils/redisRateLimitStore.js';
@@ -287,7 +287,7 @@ function buildPortalProxy(cookieName, target, serviceName) {
       });
     }
     try {
-      const decoded = jwt.verify(token, PORTAL_SESSION_SECRET, { algorithms: [JWT_ALGORITHM] });
+      const decoded = jwt.verify(token, PORTAL_SESSION_SECRET, { algorithms: [PORTAL_SESSION_ALGORITHM] });
       req.user = {
         id:       decoded.sub,
         email:    decoded.email,
