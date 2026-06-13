@@ -1309,6 +1309,96 @@ router.get(
   },
 );
 
+/**
+ * POST /api/payments/internal/usage-invoice
+ *
+ * Service-to-service (API-key) endpoint used by the AI Communication backend's
+ * monthly usage-invoicing job. Raises an invoice in the payment service for a
+ * customer's pay-as-you-go usage for a billing month.
+ * Body: { iamUserId?, email?, businessId, billingMonth, replyCount, perReplyPaise, currency? }
+ */
+router.post('/internal/usage-invoice', async (req, res, next) => {
+  try {
+    if (!hasValidCommunicationApiKey(req)) {
+      throw new AppError('Unauthorized.', 401);
+    }
+    if (!config.payment?.serviceUrl) throw new AppError('Payment service is not configured.', 503);
+    if (!config.payment?.apiKey) throw new AppError('Payment service API key is not configured.', 503);
+
+    const body = req.body || {};
+    const email = typeof body.email === 'string' ? normalizeEmail(body.email) : '';
+    const iamUserId = typeof body.iamUserId === 'string' ? body.iamUserId.trim() : '';
+    const billingMonth = typeof body.billingMonth === 'string' ? body.billingMonth.trim() : '';
+    const replyCount = Number(body.replyCount);
+    const perReplyPaise = Number(body.perReplyPaise);
+    const currency = typeof body.currency === 'string' && body.currency.trim() ? body.currency.trim() : 'INR';
+
+    if (!email && !iamUserId) throw new AppError('Provide email or iamUserId.', 400);
+    if (!billingMonth) throw new AppError('billingMonth is required.', 400);
+    if (!Number.isFinite(replyCount) || replyCount < 1) throw new AppError('replyCount must be >= 1.', 400);
+    if (!Number.isFinite(perReplyPaise) || perReplyPaise < 1) throw new AppError('perReplyPaise must be >= 1.', 400);
+
+    const tenantId = typeof body.tenantId === 'string' && body.tenantId.trim()
+      ? body.tenantId.trim()
+      : resolveEffectiveTenantId(req.headers['x-tenant-id']);
+    // Bill the customer under the same id their other records use.
+    const customerId = iamUserId || buildCheckoutCustomerId(email);
+
+    const result = await pmApi('POST', '/api/v1/billing/invoices', {
+      tenantId,
+      userId: customerId,
+      userEmail: email || undefined,
+      requestId: req.requestId,
+      data: {
+        currency,
+        items: [
+          {
+            description: `Pay-as-you-go usage — ${billingMonth} (${replyCount} replies)`,
+            quantity: replyCount,
+            unitAmountRaw: perReplyPaise,
+          },
+        ],
+        metadata: {
+          kind: 'payg_usage',
+          billingMonth,
+          businessId: typeof body.businessId === 'string' ? body.businessId : undefined,
+          planKey: typeof body.planKey === 'string' ? body.planKey : undefined,
+          replyCount,
+          perReplyPaise,
+        },
+      },
+    });
+
+    if (result.error) {
+      logger.error('usage-invoice create failed', { status: result.status, billingMonth, customerId });
+      throw new AppError(result.data?.message || 'Failed to create usage invoice.', result.status || 502);
+    }
+
+    const invoice = result.data?.data ?? result.data;
+
+    // Issue the invoice so it becomes payable (best-effort — the draft is
+    // already recorded if this step fails).
+    if (invoice?.id) {
+      const issued = await pmApi('PATCH', `/api/v1/billing/invoices/${encodeURIComponent(invoice.id)}/issue`, {
+        tenantId,
+        userId: customerId,
+        requestId: req.requestId,
+      });
+      if (issued.error) {
+        logger.warn('usage-invoice issue failed (left as draft)', { status: issued.status, invoiceId: invoice.id });
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Usage invoice created.',
+      data: { invoiceId: invoice?.id ?? null, billingMonth, replyCount },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get(
   '/invoices',
   authenticate,
