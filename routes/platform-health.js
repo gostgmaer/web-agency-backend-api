@@ -203,10 +203,23 @@ router.get("/", async (req, res, next) => {
       services.push(await pingUrl(`${jobAgentUrl}/health`, "Job Agent Service"));
     }
 
-    // ── 2c. AI Workflow service (optional) ─────────────────────────────────────
+    // ── 2c. AI Platform (AI Workflow agent) ────────────────────────────────────
+    // `/health` is an unauthenticated liveness probe on the agent — it is
+    // explicitly excluded from request-signing (see multi-tennet-ai-agent
+    // RequestSigningMiddleware excluded_paths), so no signature is required.
+    // When AI_WORKFLOW_URL is not configured, report "disabled" rather than a
+    // misleading "down".
     const aiWorkflowUrl = (config.aiWorkflow?.serviceUrl || "").trim().replace(/\/+$/, "");
     if (aiWorkflowUrl) {
-      services.push(await pingUrl(`${aiWorkflowUrl}/health`, "AI Workflow"));
+      services.push(await pingUrl(`${aiWorkflowUrl}/health`, "AI Platform"));
+    } else {
+      services.push({
+        name: "AI Platform",
+        status: "disabled",
+        checks: { configured: "disabled" },
+        latencyMs: 0,
+        timestamp: new Date().toISOString(),
+      });
     }
 
     // ── 3. Notification service ─────────────────────────────────────────────
@@ -291,10 +304,13 @@ router.get("/", async (req, res, next) => {
     );
 
     // ── Derive overall status ───────────────────────────────────────────────
-    const allItems = [...services, ...dedupedProducts.filter((p) => p.status !== "unknown")];
+    // Only count items that represent a live, enabled service. "disabled"
+    // (not configured) and "unknown" (no health URL) must not drag the banner.
+    const countable = (status) => status !== "unknown" && status !== "disabled";
+    const allItems = [...services, ...dedupedProducts].filter((s) => countable(s.status));
     const overallStatus =
       allItems.length === 0
-        ? "unknown"
+        ? "ok"
         : allItems.every((s) => s.status === "ok")
         ? "ok"
         : allItems.some((s) => s.status === "degraded")
