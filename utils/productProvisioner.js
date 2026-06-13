@@ -285,6 +285,11 @@ async function _provisionCommunication(productCfg, data) {
     businessName: data.businessName || data.name,
     ...(data.paymentId   ? { paymentId:  data.paymentId   } : {}),
     ...(data.externalId  ? { externalId: data.externalId  } : {}),
+    // Pay-as-you-go top-up: seed/credit prepaid reply balance. The AI Comm
+    // backend treats a repeat call with credits as an idempotent top-up.
+    ...(Number(data.prepaidReplyCredits) > 0
+      ? { prepaidReplyCredits: Number(data.prepaidReplyCredits) }
+      : {}),
   };
 
   const url = `${productCfg.provisionUrl}/onboarding/create-account`;

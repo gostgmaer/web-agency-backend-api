@@ -67,7 +67,11 @@ const BILLING_PLANS = {
     trialDays: 0,
     interval: 'month',
     intervalCount: 1,
-    INR: 1299900,
+    // Pay-as-you-go is a one-time prepaid top-up, NOT a recurring subscription.
+    // ₹500 buys 2,500 reply credits at ₹0.20/reply; users top up again anytime.
+    INR: 50000,
+    billingModel: 'usage',
+    topUpReplies: 2500,
   },
 };
 
@@ -781,7 +785,7 @@ async function assertVerifiedTransactionIntegrity({ transactionId, tenantId, pen
 }
 
 /** Shared post-payment provisioning: provision the product account and respond. */
-async function handlePostPayment(res, { productId, name, email, planKey, paymentId, businessName, externalId, tenantId, requestId }) {
+async function handlePostPayment(res, { productId, name, email, planKey, paymentId, businessName, externalId, tenantId, requestId, prepaidReplyCredits }) {
   let provisionResult = null;
   try {
     provisionResult = await provision(productId, {
@@ -793,6 +797,7 @@ async function handlePostPayment(res, { productId, name, email, planKey, payment
       externalId,
       tenantId,
       requestId,
+      ...(Number(prepaidReplyCredits) > 0 ? { prepaidReplyCredits: Number(prepaidReplyCredits) } : {}),
     });
   } catch (err) {
     // 409 = already purchased — surface this directly to the UI so the user
@@ -895,6 +900,9 @@ router.post('/initiate', initiateLimiter, async (req, res, next) => {
 
     // ── Public checkout uses INR providers only ──
     const amount = plan.INR;
+    // Usage-billed plans (pay-as-you-go) are a one-time prepaid top-up, not a
+    // recurring subscription — never create a provider mandate for them.
+    const isUsageBilled = plan.billingModel === 'usage';
 
     const result = await pmApi('POST', '/api/v1/payments/initiate', {
       tenantId,
@@ -907,8 +915,8 @@ router.post('/initiate', initiateLimiter, async (req, res, next) => {
         currency: 'INR',
         providers: [p],
         metadata: {
-          billingMode: 'subscription',
-          recurringMode: p === 'RAZORPAY',
+          billingMode: isUsageBilled ? 'topup' : 'subscription',
+          recurringMode: !isUsageBilled && p === 'RAZORPAY',
           tenantId,
           productId,
           planKey: normalizedPlanKey,
@@ -920,6 +928,7 @@ router.post('/initiate', initiateLimiter, async (req, res, next) => {
           trialDays: plan.trialDays,
           interval: plan.interval,
           intervalCount: plan.intervalCount,
+          ...(isUsageBilled ? { topUpReplies: plan.topUpReplies } : {}),
           source: 'web-agency-checkout',
         },
       },
@@ -1061,6 +1070,12 @@ router.post('/verify', verifyLimiter, async (req, res, next) => {
       throw new AppError('Unable to resolve planKey for verification. Please restart checkout.', 400);
     }
 
+    // Pay-as-you-go is a prepaid top-up: grant reply credits on provisioning.
+    const resolvedPlan = getBillingPlan(resolvedPlanKey);
+    const prepaidReplyCredits = resolvedPlan.billingModel === 'usage'
+      ? Number(resolvedPlan.topUpReplies) || 0
+      : 0;
+
     return handlePostPayment(res, {
       productId:    resolveProductId({ productId: pending.productId }),
       name:         name || pending.customerEmail,
@@ -1071,6 +1086,7 @@ router.post('/verify', verifyLimiter, async (req, res, next) => {
       externalId,
       tenantId,
       requestId:    req.requestId || '',
+      prepaidReplyCredits,
     });
   } catch (err) {
     next(err);
