@@ -54,24 +54,25 @@ const BILLING_PLANS = {
     INR: 49900,
   },
   growth: {
+    // Internal key stays "growth"; customer-facing name is "Pro".
     planId: 'plan_easydev_growth_inr_monthly',
-    productName: 'EasyDev Growth Plan',
+    productName: 'EasyDev Pro Plan',
     trialDays: 3,
     interval: 'month',
     intervalCount: 1,
-    INR: 199900,
+    INR: 149900,
   },
   payg: {
-    planId: 'plan_easydev_business_inr_monthly',
+    planId: 'plan_easydev_payg_inr',
     productName: 'EasyDev Pay as you go Plan',
     trialDays: 0,
     interval: 'month',
     intervalCount: 1,
-    // Pay-as-you-go is a one-time prepaid top-up, NOT a recurring subscription.
-    // ₹500 buys 625 reply credits at ₹0.80/reply; users top up again anytime.
-    INR: 50000,
+    // Pay-as-you-go: ₹0 to activate, unlimited usage billed postpaid at
+    // ₹0.50/reply and invoiced monthly. No upfront charge.
+    INR: 0,
     billingModel: 'usage',
-    topUpReplies: 625,
+    perReplyPaise: 50,
   },
 };
 
@@ -880,6 +881,17 @@ router.post('/initiate', initiateLimiter, async (req, res, next) => {
     const p        = provider.toUpperCase();
     const normalizedPlanKey = normalizePlanKey(planKey);
     const plan     = getBillingPlan(normalizedPlanKey);
+
+    // Usage-billed plans (pay-as-you-go) have no upfront charge — they are
+    // activated for free and billed monthly on actual usage. Route them to
+    // POST /payments/activate instead of the payment-order flow.
+    if (plan.billingModel === 'usage') {
+      throw new AppError(
+        'Pay-as-you-go has no upfront payment. Use POST /api/payments/activate to enable it.',
+        400,
+      );
+    }
+
     const orderId  = randomUUID();
     const idempKey = randomUUID();
     const tenantId = resolveEffectiveTenantId(req.headers['x-tenant-id']);
@@ -900,9 +912,6 @@ router.post('/initiate', initiateLimiter, async (req, res, next) => {
 
     // ── Public checkout uses INR providers only ──
     const amount = plan.INR;
-    // Usage-billed plans (pay-as-you-go) are a one-time prepaid top-up, not a
-    // recurring subscription — never create a provider mandate for them.
-    const isUsageBilled = plan.billingModel === 'usage';
 
     const result = await pmApi('POST', '/api/v1/payments/initiate', {
       tenantId,
@@ -915,8 +924,8 @@ router.post('/initiate', initiateLimiter, async (req, res, next) => {
         currency: 'INR',
         providers: [p],
         metadata: {
-          billingMode: isUsageBilled ? 'topup' : 'subscription',
-          recurringMode: !isUsageBilled && p === 'RAZORPAY',
+          billingMode: 'subscription',
+          recurringMode: p === 'RAZORPAY',
           tenantId,
           productId,
           planKey: normalizedPlanKey,
@@ -928,7 +937,6 @@ router.post('/initiate', initiateLimiter, async (req, res, next) => {
           trialDays: plan.trialDays,
           interval: plan.interval,
           intervalCount: plan.intervalCount,
-          ...(isUsageBilled ? { topUpReplies: plan.topUpReplies } : {}),
           source: 'web-agency-checkout',
         },
       },
@@ -1070,12 +1078,6 @@ router.post('/verify', verifyLimiter, async (req, res, next) => {
       throw new AppError('Unable to resolve planKey for verification. Please restart checkout.', 400);
     }
 
-    // Pay-as-you-go is a prepaid top-up: grant reply credits on provisioning.
-    const resolvedPlan = getBillingPlan(resolvedPlanKey);
-    const prepaidReplyCredits = resolvedPlan.billingModel === 'usage'
-      ? Number(resolvedPlan.topUpReplies) || 0
-      : 0;
-
     return handlePostPayment(res, {
       productId:    resolveProductId({ productId: pending.productId }),
       name:         name || pending.customerEmail,
@@ -1086,7 +1088,61 @@ router.post('/verify', verifyLimiter, async (req, res, next) => {
       externalId,
       tenantId,
       requestId:    req.requestId || '',
-      prepaidReplyCredits,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/payments/activate
+ *
+ * Activates a zero-cost, usage-billed plan (pay-as-you-go) with NO upfront
+ * payment. Provisions the product account directly; usage is billed monthly
+ * on actual replies (₹0.50/reply) via the usage-invoicing job.
+ * Body: { planKey, customerEmail, name?, businessName?, productId? }
+ */
+router.post('/activate', initiateLimiter, async (req, res, next) => {
+  try {
+    if (!config.payment?.apiKey) {
+      throw new AppError('Payment service is not configured on this server.', 503);
+    }
+
+    const { planKey, customerEmail, name, businessName, externalId } = req.body;
+    if (!planKey || !customerEmail) {
+      throw new AppError('planKey and customerEmail are required.', 400);
+    }
+
+    const productId = resolveProductId(req.body);
+    const normalizedPlanKey = normalizePlanKey(planKey);
+    const plan = getBillingPlan(normalizedPlanKey);
+
+    // Only zero-cost usage-billed plans may be activated without payment.
+    if (plan.billingModel !== 'usage') {
+      throw new AppError('This plan requires payment. Use POST /api/payments/initiate.', 400);
+    }
+
+    const tenantId = resolveEffectiveTenantId(req.headers['x-tenant-id']);
+    const checkoutIdentity = resolveCheckoutIdentity(req, customerEmail);
+    const customerId = checkoutIdentity.customerId;
+
+    await ensureNoActiveProductSubscription({
+      tenantId,
+      customerId,
+      customerEmail: checkoutIdentity.customerEmail,
+      productId,
+      requestId: req.requestId,
+    });
+
+    return handlePostPayment(res, {
+      productId,
+      name:         name || checkoutIdentity.customerEmail,
+      email:        String(checkoutIdentity.customerEmail),
+      planKey:      normalizedPlanKey,
+      businessName,
+      externalId,
+      tenantId,
+      requestId:    req.requestId || '',
     });
   } catch (err) {
     next(err);
