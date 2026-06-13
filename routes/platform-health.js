@@ -187,6 +187,28 @@ router.get("/", async (req, res, next) => {
       services.push(await pingUrl(`${paymentServiceUrl}/api/v1/health`, "Payment Service"));
     }
 
+    // ── 2a. AI Communication platform ─────────────────────────────────────────
+    // Checked directly (config-driven) so it always appears — independent of
+    // whether IAM has it registered as an app with a healthCheckUrl.
+    const communicationBase = config.communication?.proxyTarget
+      ? `${config.communication.proxyTarget}${config.communication.proxyPath || ""}`
+      : null;
+    if (communicationBase) {
+      services.push(await pingUrl(`${communicationBase}/health`, "AI Communication"));
+    }
+
+    // ── 2b. Job Agent service ──────────────────────────────────────────────────
+    const jobAgentUrl = (process.env.JOB_AGENT_URL || "").trim().replace(/\/+$/, "");
+    if (jobAgentUrl) {
+      services.push(await pingUrl(`${jobAgentUrl}/health`, "Job Agent Service"));
+    }
+
+    // ── 2c. AI Workflow service (optional) ─────────────────────────────────────
+    const aiWorkflowUrl = (config.aiWorkflow?.serviceUrl || "").trim().replace(/\/+$/, "");
+    if (aiWorkflowUrl) {
+      services.push(await pingUrl(`${aiWorkflowUrl}/health`, "AI Workflow"));
+    }
+
     // ── 3. Notification service ─────────────────────────────────────────────
     const notificationHealthUrl = config.notification?.healthUrl;
     if (notificationHealthUrl) {
@@ -261,8 +283,15 @@ router.get("/", async (req, res, next) => {
       }
     }
 
+    // Drop any product app already reported as an explicit service above
+    // (e.g. AI Communication) to avoid listing it twice.
+    const serviceNames = new Set(services.map((s) => String(s.name).toLowerCase()));
+    const dedupedProducts = products.filter(
+      (p) => !serviceNames.has(String(p.name).toLowerCase()),
+    );
+
     // ── Derive overall status ───────────────────────────────────────────────
-    const allItems = [...services, ...products.filter((p) => p.status !== "unknown")];
+    const allItems = [...services, ...dedupedProducts.filter((p) => p.status !== "unknown")];
     const overallStatus =
       allItems.length === 0
         ? "unknown"
@@ -280,7 +309,7 @@ router.get("/", async (req, res, next) => {
       data: {
         healthStatus: overallStatus,
         services,
-        products,
+        products: dedupedProducts,
         checkedAt: new Date().toISOString(),
       },
     });
