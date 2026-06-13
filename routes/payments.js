@@ -51,7 +51,7 @@ const BILLING_PLANS = {
     trialDays: 3,
     interval: 'month',
     intervalCount: 1,
-    INR: 199900,
+    INR: 49900,
   },
   growth: {
     planId: 'plan_easydev_growth_inr_monthly',
@@ -59,7 +59,7 @@ const BILLING_PLANS = {
     trialDays: 3,
     interval: 'month',
     intervalCount: 1,
-    INR: 499900,
+    INR: 199900,
   },
   payg: {
     planId: 'plan_easydev_business_inr_monthly',
