@@ -68,10 +68,10 @@ const BILLING_PLANS = {
     interval: 'month',
     intervalCount: 1,
     // Pay-as-you-go is a one-time prepaid top-up, NOT a recurring subscription.
-    // ₹500 buys 2,500 reply credits at ₹0.20/reply; users top up again anytime.
+    // ₹500 buys 625 reply credits at ₹0.80/reply; users top up again anytime.
     INR: 50000,
     billingModel: 'usage',
-    topUpReplies: 2500,
+    topUpReplies: 625,
   },
 };
 
