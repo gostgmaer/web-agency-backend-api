@@ -210,10 +210,13 @@ const pmUrl = () => {
 };
 
 function resolveEffectiveTenantId(explicitTenantId) {
-  const runtimeTenantId = getRuntimeTenantFallback().tenantId;
-  const tenantId = explicitTenantId || runtimeTenantId || null;
+  const runtimeTenant = getRuntimeTenantFallback();
+  const tenantId = explicitTenantId || runtimeTenant.tenantId || null;
   if (!tenantId) {
     throw new AppError('Tenant context is missing. Configure TENANT and restart gateway.', 503);
+  }
+  if (tenantId === runtimeTenant.tenantSlug && runtimeTenant.tenantId) {
+    return runtimeTenant.tenantId;
   }
   return tenantId;
 }
@@ -658,24 +661,47 @@ function normalizeCustomerInvoice(invoice) {
 }
 
 async function ensureNoActiveProductSubscription({ tenantId, customerId, customerEmail, productId, requestId }) {
-  const result = await pmApi('GET', '/api/v1/subscriptions', {
-    tenantId,
-    userId: customerId,
-    userEmail: customerEmail,
-    requestId,
-  });
+  // Query BOTH the IAM user ID and the email-based checkout ID to catch
+  // subscriptions that were created during an anonymous checkout (before the
+  // user created/linked their account). Without this, a re-purchase through
+  // the authenticated flow would miss the existing email-ID subscription.
+  const emailCustomerId = customerEmail ? buildCheckoutCustomerId(normalizeEmail(customerEmail)) : null;
+  const lookupIds = uniqueById([
+    customerId    ? { id: customerId } : null,
+    emailCustomerId && emailCustomerId !== customerId ? { id: emailCustomerId } : null,
+  ].filter(Boolean)).map((item) => item.id);
 
-  if (result.error) {
+  const runtimeTenant = getRuntimeTenantFallback();
+  const tenantIds = [
+    tenantId,
+    runtimeTenant.tenantSlug && runtimeTenant.tenantSlug !== tenantId ? runtimeTenant.tenantSlug : null
+  ].filter(Boolean);
+
+  const results = await Promise.all(
+    lookupIds.flatMap((id) =>
+      tenantIds.map((tId) =>
+        pmApi('GET', '/api/v1/subscriptions', {
+          tenantId: tId,
+          userId: id,
+          userEmail: customerEmail || undefined,
+          requestId,
+        })
+      )
+    )
+  );
+
+  const failedResult = results.find((r) => r.error);
+  if (failedResult) {
     logger.error('subscription pre-check failed', {
-      status: result.status,
+      status: failedResult.status,
       tenantId,
       customerId,
       productId,
     });
-    throw new AppError(result.data?.message || 'Failed to validate existing subscriptions.', result.status || 502);
+    throw new AppError(failedResult.data?.message || 'Failed to validate existing subscriptions.', failedResult.status || 502);
   }
 
-  const subscriptions = extractCollection(result.data).items;
+  const subscriptions = uniqueById(results.flatMap((r) => extractCollection(r.data).items));
   const existing = subscriptions
     .map(normalizeCustomerProduct)
     .find((item) => item.productId === productId && isBlockingProductStatus(item.status));
@@ -687,6 +713,7 @@ async function ensureNoActiveProductSubscription({ tenantId, customerId, custome
     );
   }
 }
+
 
 async function assertVerifiedTransactionIntegrity({ transactionId, tenantId, pending, requestId }) {
   const txResult = await pmApi('GET', `/api/v1/payments/${encodeURIComponent(transactionId)}`, {
@@ -1165,18 +1192,49 @@ router.get(
 
       const qs = new URLSearchParams(req.query).toString();
       const tenantId = req.headers['x-tenant-id'];
+      const userEmail = typeof req.user?.email === 'string' && req.user.email.trim()
+        ? normalizeEmail(req.user.email)
+        : null;
+
+      // Build lookup IDs: IAM UUID + legacy checkout email ID.
+      // Both must be queried because subscriptions may have been created with
+      // either ID depending on whether the customer was logged in at checkout.
       const customerIds = uniqueById([
         req.user?.id ? { id: req.user.id } : null,
-        req.user?.email ? { id: buildCheckoutCustomerId(req.user.email) } : null,
+        userEmail    ? { id: buildCheckoutCustomerId(userEmail) } : null,
       ].filter(Boolean)).map((item) => item.id);
 
-      const subscriptionResults = await Promise.all(customerIds.map((customerId) =>
-        pmApi('GET', `/api/v1/subscriptions${qs ? `?${qs}` : ''}`, {
-          tenantId,
-          userId: customerId,
-          requestId: req.requestId,
-        })
-      ));
+      if (customerIds.length === 0) {
+        throw new AppError('Unable to resolve customer identity from token.', 401);
+      }
+
+      if (!userEmail) {
+        // JWT is missing the email claim — subscriptions created with the checkout
+        // email-based ID will NOT be found. Log so this is visible in ops.
+        logger.warn('GET /subscriptions: no email claim in JWT — anonymous-checkout products may not appear', {
+          userId: req.user?.id,
+        });
+      }
+
+      const runtimeTenant = getRuntimeTenantFallback();
+      const tenantIds = [
+        tenantId,
+        runtimeTenant.tenantSlug && runtimeTenant.tenantSlug !== tenantId ? runtimeTenant.tenantSlug : null
+      ].filter(Boolean);
+
+      const subscriptionResults = await Promise.all(
+        customerIds.flatMap((customerId) =>
+          tenantIds.map((tId) =>
+            pmApi('GET', `/api/v1/subscriptions${qs ? `?${qs}` : ''}`, {
+              tenantId: tId,
+              userId: customerId,
+              // Pass email as a supplementary header so PM can use it if needed
+              userEmail: userEmail || undefined,
+              requestId: req.requestId,
+            })
+          )
+        )
+      );
 
       const failedSubscription = subscriptionResults.find((result) => result.error);
       if (failedSubscription) {
@@ -1188,13 +1246,18 @@ router.get(
       let items = subscriptions.map(normalizeCustomerProduct);
 
       if (items.length === 0) {
-        const transactionResults = await Promise.all(customerIds.map((customerId) =>
-          pmApi('GET', `/api/v1/payments${qs ? `?${qs}` : ''}`, {
-            tenantId,
-            userId: customerId,
-            requestId: req.requestId,
-          })
-        ));
+        const transactionResults = await Promise.all(
+          customerIds.flatMap((customerId) =>
+            tenantIds.map((tId) =>
+              pmApi('GET', `/api/v1/payments${qs ? `?${qs}` : ''}`, {
+                tenantId: tId,
+                userId: customerId,
+                userEmail: userEmail || undefined,
+                requestId: req.requestId,
+              })
+            )
+          )
+        );
 
         const failedTransaction = transactionResults.find((result) => result.error);
         if (failedTransaction) {
@@ -1223,6 +1286,7 @@ router.get(
     }
   },
 );
+
 
 router.get(
   '/internal/products/:productId/current',
@@ -1254,14 +1318,24 @@ router.get(
         email ? { id: buildCheckoutCustomerId(email) } : null,
       ].filter(Boolean)).map((item) => item.id);
 
-      const subscriptionResults = await Promise.all(customerIds.map((customerId) =>
-        pmApi('GET', '/api/v1/subscriptions', {
-          tenantId,
-          userId: customerId,
-          userEmail: email || undefined,
-          requestId: req.requestId,
-        })
-      ));
+      const runtimeTenant = getRuntimeTenantFallback();
+      const tenantIds = [
+        tenantId,
+        runtimeTenant.tenantSlug && runtimeTenant.tenantSlug !== tenantId ? runtimeTenant.tenantSlug : null
+      ].filter(Boolean);
+
+      const subscriptionResults = await Promise.all(
+        customerIds.flatMap((customerId) =>
+          tenantIds.map((tId) =>
+            pmApi('GET', '/api/v1/subscriptions', {
+              tenantId: tId,
+              userId: customerId,
+              userEmail: email || undefined,
+              requestId: req.requestId,
+            })
+          )
+        )
+      );
 
       const failedSubscription = subscriptionResults.find((result) => result.error);
       if (failedSubscription) {
@@ -1274,14 +1348,18 @@ router.get(
         .filter((item) => item.productId === productId);
 
       if (items.length === 0) {
-        const transactionResults = await Promise.all(customerIds.map((customerId) =>
-          pmApi('GET', '/api/v1/payments', {
-            tenantId,
-            userId: customerId,
-            userEmail: email || undefined,
-            requestId: req.requestId,
-          })
-        ));
+        const transactionResults = await Promise.all(
+          customerIds.flatMap((customerId) =>
+            tenantIds.map((tId) =>
+              pmApi('GET', '/api/v1/payments', {
+                tenantId: tId,
+                userId: customerId,
+                userEmail: email || undefined,
+                requestId: req.requestId,
+              })
+            )
+          )
+        );
 
         const failedTransaction = transactionResults.find((result) => result.error);
         if (failedTransaction) {

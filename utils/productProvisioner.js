@@ -170,6 +170,10 @@ export async function provision(productId, data) {
       result = await _provisionCommunication(productConfig, data);
       break;
 
+    case 'easydev-job-agent':
+      result = await _provisionJobAgent(productConfig, data);
+      break;
+
     // Add further product types here:
     // case 'generic-webhook':
     //   result = await _provisionWebhook(productConfig, data);
@@ -201,6 +205,9 @@ export async function provision(productId, data) {
           tenantId: data.tenantId,
           requestId: data.requestId,
         });
+        break;
+      case 'easydev-job-agent':
+        // No additional linking required for job-agent
         break;
       default:
         throw new Error(`IAM linking is not implemented for provisionType "${productConfig.provisionType}".`);
@@ -374,5 +381,25 @@ async function _provisionCommunication(productCfg, data) {
     userId:            raw.userId,
     businessId:        raw.businessId,
     planType:          communicationPlan,
+  };
+}
+
+// ─── EasyDev AI Job Agent ──────────────────────────────────────────────────
+
+/**
+ * Provision an EasyDev AI Job Agent account.
+ *
+ * No local backend provisioning API is required; user records are dynamically
+ * generated on first SSO launch. Returns the normalised login credentials shape.
+ */
+async function _provisionJobAgent(productCfg, data) {
+  const requestedPlanKey = typeof data.planKey === 'string' ? data.planKey.trim().toLowerCase() : '';
+  const jobAgentPlan = productCfg.planMap?.[requestedPlanKey] || 'FREE';
+
+  return {
+    success:  true,
+    loginUrl: `${config.app.frontendUrl}/dashboard/products/easydev-job-agent/`,
+    userId:   data.email,
+    planType: jobAgentPlan,
   };
 }

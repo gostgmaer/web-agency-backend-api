@@ -324,7 +324,9 @@ app.use((req, _res, next) => {
     });
   }
 
-  if (!req.headers['x-tenant-id'] && fallbackTenantId) {
+  if (req.headers['x-tenant-id'] === fallbackTenantSlug && fallbackTenantId) {
+    req.headers['x-tenant-id'] = fallbackTenantId;
+  } else if (!req.headers['x-tenant-id'] && fallbackTenantId) {
     req.headers['x-tenant-id'] = fallbackTenantId;
   }
 
