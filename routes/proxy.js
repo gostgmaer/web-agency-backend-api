@@ -67,6 +67,23 @@ import { signAiWorkflowRequest }               from '../utils/aiWorkflowSigning.
 
 const router = express.Router();
 
+const authRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // 10 requests per minute per IP
+  store: new RedisRateLimitStore(60 * 1000),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many authentication attempts. Please try again in a minute.',
+  },
+  keyGenerator: (req) => {
+    return req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+  },
+  skip: () => process.env.NODE_ENV !== 'production',
+});
+
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -141,6 +158,66 @@ function extractCookie(header, name) {
   const m = String(header).match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
   return m ? decodeURIComponent(m[1]) : null;
 }
+
+function normalizeOriginCandidate(origin) {
+  const raw = String(origin || "").trim();
+  if (!raw) return "";
+
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+    ? raw
+    : `${raw.includes("localhost") ? "http" : "https"}://${raw}`;
+
+  try {
+    const parsed = new URL(withScheme);
+    return `${parsed.protocol}//${parsed.host}`.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function expandOriginVariants(origin) {
+  const normalized = normalizeOriginCandidate(origin);
+  if (!normalized) return [];
+
+  const variants = new Set([normalized]);
+
+  try {
+    const parsed = new URL(normalized);
+    const { protocol, port } = parsed;
+    const hostname = parsed.hostname;
+    const isLocalhost = hostname === "localhost";
+    const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+    const hasRootDomain = hostname.includes(".");
+    const shouldAddWwwVariant = hasRootDomain && !isLocalhost && !isIPv4;
+
+    if (shouldAddWwwVariant) {
+      const alternateHost = hostname.startsWith("www.")
+        ? hostname.slice(4)
+        : `www.${hostname}`;
+      const hostWithPort = port ? `${alternateHost}:${port}` : alternateHost;
+      variants.add(`${protocol}//${hostWithPort}`);
+    }
+  } catch {
+    // Keep only the normalized origin if URL parsing unexpectedly fails.
+  }
+
+  return [...variants];
+}
+
+// Precompute allowed origins for CSRF validation
+const corsOriginsRaw = config.app.corsOrigins ?? [];
+const configuredOrigins = [
+  ...(Array.isArray(corsOriginsRaw) ? corsOriginsRaw : String(corsOriginsRaw).split(",")),
+  config.app.frontendUrl,
+];
+const allowedOrigins = [
+  ...new Set(
+    configuredOrigins
+      .flatMap((origin) => expandOriginVariants(origin))
+      .filter(Boolean)
+  ),
+];
+
 
 // ─── buildProxy ───────────────────────────────────────────────────────────────
 /**
@@ -277,6 +354,33 @@ function buildPortalProxy(cookieName, target, serviceName) {
     } catch (err) { next(err); }
   });
 
+  // ── CSRF PROTECTION: Origin/Referer verification ──────────────────────────
+  r.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+
+    let requestOrigin = '';
+    if (origin) {
+      requestOrigin = normalizeOriginCandidate(origin);
+    } else if (referer) {
+      requestOrigin = normalizeOriginCandidate(referer);
+    }
+
+    if (requestOrigin && !allowedOrigins.includes(requestOrigin)) {
+      logger.warn(`Blocked CSRF request to ${serviceName}: Invalid Origin/Referer`, {
+        origin,
+        referer,
+        requestOrigin,
+        allowedOrigins,
+      });
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: Request origin/referer is not allowed.',
+      });
+    }
+    next();
+  });
+
   // ── AUTHENTICATED: validate session cookie ───────────────────────────────
   r.use((req, res, next) => {
     const token = extractCookie(req.headers.cookie ?? '', cookieName);
@@ -367,7 +471,7 @@ if (config.auth.serviceUrl) {
   }
 
   // Public
-  router.use('/auth', createProxyMiddleware({
+  router.use('/auth', authRateLimiter, createProxyMiddleware({
     target: iam,
     changeOrigin: true,
     pathRewrite: (path) => `/api/v1/iam/auth${path}`,
